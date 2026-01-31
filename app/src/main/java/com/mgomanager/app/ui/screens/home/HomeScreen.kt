@@ -82,7 +82,7 @@ fun HomeScreen(
                                     }
                                 )
                             }
-                            HorizontalDivider()
+                            Divider()
                             DropdownMenuItem(
                                 text = { Text(if (uiState.sortDirection == SortDirection.ASC) "Aufsteigend" else "Absteigend") },
                                 onClick = { viewModel.toggleSortDirection() },
