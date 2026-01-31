@@ -152,4 +152,28 @@ class FilePermissionManagerTest {
         assertEquals("u0_a456", permissions.group)
         assertEquals("700", permissions.permissions)
     }
+
+    @Test
+    fun `getFilePermissions should handle zero permissions correctly`() = runTest {
+        // Given
+        val path = "/data/data/com.scopely.monopolygo/files/test"
+        // Edge case: 0000 permissions should become "0"
+        val statOutput = """
+            Uid: (10123/u0_a123)   Gid: (10456/u0_a456)
+            Access: (0000/----------)
+        """.trimIndent()
+        
+        coEvery { rootUtil.executeCommand("stat -c '%U:%G %a' \"$path\"") } returns Result.failure(Exception("Command failed"))
+        coEvery { rootUtil.executeCommand("stat \"$path\" | grep -E 'Uid:|Access:' | head -2") } returns Result.success(statOutput)
+
+        // When
+        val result = permissionManager.getFilePermissions(path)
+
+        // Then
+        assertTrue(result.isSuccess)
+        val permissions = result.getOrThrow()
+        assertEquals("u0_a123", permissions.owner)
+        assertEquals("u0_a456", permissions.group)
+        assertEquals("0", permissions.permissions)
+    }
 }

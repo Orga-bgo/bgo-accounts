@@ -109,9 +109,11 @@ class FilePermissionManager @Inject constructor(
                 ?: return Result.failure(Exception("No Access line found"))
             
             // Extract permissions from format: "Access: (0755/drwxr-xr-x)"
+            // Remove leading zero if present (e.g., "0755" -> "755")
             val permMatch = Regex("Access:\\s*\\((\\d+)/").find(accessLine)
-            val permissions = permMatch?.groupValues?.getOrNull(1)
+            val rawPermissions = permMatch?.groupValues?.getOrNull(1)
                 ?: return Result.failure(Exception("Cannot parse permissions from: $accessLine"))
+            val permissions = rawPermissions.trimStart('0').ifEmpty { "0" }
 
             Result.success(FilePermissions(
                 owner = owner,
