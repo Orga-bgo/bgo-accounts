@@ -45,8 +45,8 @@ class RestoreBackupUseCase @Inject constructor(
 
             // Step 4: Remove old directories and copy backup directories
             // First delete existing directories to prevent nested folder issues
-            rootUtil.executeCommand("rm -rf $MGO_FILES_PATH/DiskBasedCacheDirectory")
-            rootUtil.executeCommand("rm -rf $MGO_PREFS_PATH")
+            rootUtil.executeCommand("rm -rf \"$MGO_FILES_PATH/DiskBasedCacheDirectory\"")
+            rootUtil.executeCommand("rm -rf \"$MGO_PREFS_PATH\"")
 
             // Copy directories to parent (without trailing slashes to copy the folder itself)
             copyBackupDirectory("${backupPath}DiskBasedCacheDirectory", "$MGO_FILES_PATH/", account.fullName)
@@ -55,7 +55,7 @@ class RestoreBackupUseCase @Inject constructor(
             // Step 5: Copy SSAID file back
             val ssaidFile = File("${backupPath}settings_ssaid.xml")
             if (ssaidFile.exists()) {
-                rootUtil.executeCommand("cp ${backupPath}settings_ssaid.xml $SSAID_PATH").getOrThrow()
+                rootUtil.executeCommand("cp \"${backupPath}settings_ssaid.xml\" \"$SSAID_PATH\"").getOrThrow()
                 logRepository.logInfo("RESTORE", "SSAID wiederhergestellt", account.fullName)
             }
 
@@ -97,7 +97,7 @@ class RestoreBackupUseCase @Inject constructor(
     }
 
     private suspend fun copyBackupDirectory(source: String, destination: String, accountName: String) {
-        val result = rootUtil.executeCommand("cp -r $source $destination")
+        val result = rootUtil.executeCommand("cp -r \"$source\" \"$destination\"")
         if (result.isSuccess) {
             logRepository.logInfo("RESTORE", "Verzeichnis wiederhergestellt: $source -> $destination", accountName)
         } else {
