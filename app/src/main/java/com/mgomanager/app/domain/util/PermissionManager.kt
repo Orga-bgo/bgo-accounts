@@ -11,6 +11,10 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.mgomanager.app.data.repository.LogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,6 +45,8 @@ class PermissionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val logRepository: LogRepository
 ) {
+    // Coroutine scope for logging (uses SupervisorJob to not cancel on errors)
+    private val logScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     companion object {
         // Permissions for Android 9-10
@@ -83,7 +89,9 @@ class PermissionManager @Inject constructor(
             }
         }
 
-        logRepository.logInfo("PERMISSION", "Storage permissions check: $hasPermission (SDK ${Build.VERSION.SDK_INT})")
+        logScope.launch {
+            logRepository.logInfo("PERMISSION", "Storage permissions check: $hasPermission (SDK ${Build.VERSION.SDK_INT})")
+        }
         return hasPermission
     }
 
@@ -136,13 +144,17 @@ class PermissionManager @Inject constructor(
      * Get intent for MANAGE_EXTERNAL_STORAGE settings (fallback for Android 11+)
      */
     fun getManageStorageIntent(): Intent {
-        logRepository.logInfo("PERMISSION", "Opening MANAGE_EXTERNAL_STORAGE settings")
+        logScope.launch {
+            logRepository.logInfo("PERMISSION", "Opening MANAGE_EXTERNAL_STORAGE settings")
+        }
         return try {
             Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
                 data = Uri.parse("package:${context.packageName}")
             }
         } catch (e: Exception) {
-            logRepository.logWarning("PERMISSION", "Fallback to general storage settings")
+            logScope.launch {
+                logRepository.logWarning("PERMISSION", "Fallback to general storage settings")
+            }
             Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
         }
     }
@@ -154,11 +166,13 @@ class PermissionManager @Inject constructor(
         val granted = permissions.filter { it.value }.keys
         val denied = permissions.filter { !it.value }.keys
 
-        if (granted.isNotEmpty()) {
-            logRepository.logInfo("PERMISSION", "Permissions granted: ${granted.joinToString()}")
-        }
-        if (denied.isNotEmpty()) {
-            logRepository.logWarning("PERMISSION", "Permissions denied: ${denied.joinToString()}")
+        logScope.launch {
+            if (granted.isNotEmpty()) {
+                logRepository.logInfo("PERMISSION", "Permissions granted: ${granted.joinToString()}")
+            }
+            if (denied.isNotEmpty()) {
+                logRepository.logWarning("PERMISSION", "Permissions denied: ${denied.joinToString()}")
+            }
         }
     }
 
@@ -166,10 +180,12 @@ class PermissionManager @Inject constructor(
      * Log SAF folder selection result
      */
     fun logSAFResult(uri: Uri?) {
-        if (uri != null) {
-            logRepository.logInfo("PERMISSION", "SAF folder selected: $uri")
-        } else {
-            logRepository.logWarning("PERMISSION", "SAF folder selection cancelled")
+        logScope.launch {
+            if (uri != null) {
+                logRepository.logInfo("PERMISSION", "SAF folder selected: $uri")
+            } else {
+                logRepository.logWarning("PERMISSION", "SAF folder selection cancelled")
+            }
         }
     }
 }
