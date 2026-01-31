@@ -288,7 +288,7 @@ class SystemCheckViewModel @Inject constructor(
     private suspend fun checkDataDataAccess(): Boolean {
         return withContext(Dispatchers.IO) {
             val testPath = "/data/data/$MONOPOLY_GO_PACKAGE"
-            rootUtil.executeCommand("ls $testPath").isSuccess
+            rootUtil.executeCommand("ls \"$testPath\"").isSuccess
         }
     }
 

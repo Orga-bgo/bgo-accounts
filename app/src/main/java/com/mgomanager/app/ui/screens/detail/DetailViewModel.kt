@@ -157,7 +157,7 @@ class DetailViewModel @Inject constructor(
                 // Step 1: Delete backup folder first (important order per P5 spec)
                 val backupPath = account.backupPath
                 if (backupPath.isNotBlank()) {
-                    val deleteResult = rootUtil.executeCommand("rm -rf $backupPath")
+                    val deleteResult = rootUtil.executeCommand("rm -rf \"$backupPath\"")
                     if (deleteResult.isFailure) {
                         logRepository.logWarning("DETAIL", "Backup-Ordner konnte nicht gelöscht werden: $backupPath")
                         // Continue with DB deletion even if folder deletion fails

@@ -469,7 +469,7 @@ class OnboardingViewModel @Inject constructor(
         return withContext(Dispatchers.IO) {
             // Check read/write permissions on /data/data/
             val testPath = "/data/data/com.scopely.monopolygo"
-            rootUtil.executeCommand("ls $testPath").isSuccess
+            rootUtil.executeCommand("ls \"$testPath\"").isSuccess
         }
     }
 
