@@ -136,7 +136,8 @@ fun BackupTab1Content(
             errorMessage = uiState.errorMessage ?: "Unbekannter Fehler",
             duplicateInfo = uiState.duplicateUserIdInfo,
             onRetry = viewModel::retryBackup,
-            onGoBack = viewModel::resetForNewBackup
+            onGoBack = viewModel::resetForNewBackup,
+            onForceBackup = if (uiState.duplicateUserIdInfo != null) viewModel::forceBackupWithDuplicate else null
         )
     }
 }
@@ -617,12 +618,14 @@ fun BackupErrorStep(
     errorMessage: String,
     duplicateInfo: DuplicateInfo?,
     onRetry: () -> Unit,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    onForceBackup: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -677,6 +680,23 @@ fun BackupErrorStep(
             Icon(Icons.Default.Refresh, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("Erneut versuchen")
+        }
+
+        // Show "Trotzdem sichern" button only for duplicate User ID errors
+        if (duplicateInfo != null && onForceBackup != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onForceBackup,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFF9800)
+                )
+            ) {
+                Icon(Icons.Default.SaveAlt, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Trotzdem sichern")
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -749,7 +769,8 @@ fun BackupTab2Content(
             errorMessage = uiState.errorMessage ?: "Unbekannter Fehler",
             duplicateInfo = uiState.duplicateUserIdInfo,
             onRetry = viewModel::retryAccountCreation,
-            onGoBack = viewModel::resetForNewAccount
+            onGoBack = viewModel::resetForNewAccount,
+            onForceBackup = if (uiState.duplicateUserIdInfo != null) viewModel::forceBackupWithDuplicate else null
         )
     }
 }
@@ -943,148 +964,162 @@ fun SsaidSelectionStep(
     onNext: () -> Unit,
     onBack: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(32.dp))
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Scrollable content
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp)
+                .padding(bottom = 80.dp), // Space for sticky buttons
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(32.dp))
 
-        Icon(
-            Icons.Default.Fingerprint,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
+            Icon(
+                Icons.Default.Fingerprint,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
 
-        Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            text = "Android ID (SSAID)",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
+            Text(
+                text = "Android ID (SSAID)",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
 
-        Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-        Text(
-            text = "Möchtest du eine neue Android ID setzen?",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            textAlign = TextAlign.Center
-        )
+            Text(
+                text = "Möchtest du eine neue Android ID setzen?",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
 
-        Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
-        if (isLoading) {
-            CircularProgressIndicator()
-        } else {
-            // Option: New SSAID
-            OutlinedCard(
-                onClick = { onSsaidOptionChange(SsaidOption.NEW) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.outlinedCardColors(
-                    containerColor = if (ssaidOption == SsaidOption.NEW)
-                        MaterialTheme.colorScheme.primaryContainer
-                    else
-                        MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = ssaidOption == SsaidOption.NEW,
-                        onClick = { onSsaidOptionChange(SsaidOption.NEW) }
+            if (isLoading) {
+                CircularProgressIndicator()
+            } else {
+                // Option: New SSAID
+                OutlinedCard(
+                    onClick = { onSsaidOptionChange(SsaidOption.NEW) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = if (ssaidOption == SsaidOption.NEW)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surface
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "Ja, neue SSAID generieren",
-                            fontWeight = if (ssaidOption == SsaidOption.NEW) FontWeight.Bold else FontWeight.Normal
-                        )
-                        Text(
-                            "Empfohlen für neuen Account",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Option: Current SSAID
-            OutlinedCard(
-                onClick = { onSsaidOptionChange(SsaidOption.CURRENT) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.outlinedCardColors(
-                    containerColor = if (ssaidOption == SsaidOption.CURRENT)
-                        MaterialTheme.colorScheme.primaryContainer
-                    else
-                        MaterialTheme.colorScheme.surface
-                )
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    RadioButton(
-                        selected = ssaidOption == SsaidOption.CURRENT,
-                        onClick = { onSsaidOptionChange(SsaidOption.CURRENT) }
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            "Nein, aktuelle SSAID behalten",
-                            fontWeight = if (ssaidOption == SsaidOption.CURRENT) FontWeight.Bold else FontWeight.Normal
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = ssaidOption == SsaidOption.NEW,
+                            onClick = { onSsaidOptionChange(SsaidOption.NEW) }
                         )
-                        currentSsaid?.let {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
                             Text(
-                                "Aktuell: $it",
+                                "Ja, neue SSAID generieren",
+                                fontWeight = if (ssaidOption == SsaidOption.NEW) FontWeight.Bold else FontWeight.Normal
+                            )
+                            Text(
+                                "Empfohlen für neuen Account",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                             )
-                        } ?: Text(
-                            "Konnte nicht gelesen werden",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Option: Current SSAID
+                OutlinedCard(
+                    onClick = { onSsaidOptionChange(SsaidOption.CURRENT) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.outlinedCardColors(
+                        containerColor = if (ssaidOption == SsaidOption.CURRENT)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else
+                            MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = ssaidOption == SsaidOption.CURRENT,
+                            onClick = { onSsaidOptionChange(SsaidOption.CURRENT) }
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                "Nein, aktuelle SSAID behalten",
+                                fontWeight = if (ssaidOption == SsaidOption.CURRENT) FontWeight.Bold else FontWeight.Normal
+                            )
+                            currentSsaid?.let {
+                                Text(
+                                    "Aktuell: $it",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            } ?: Text(
+                                "Konnte nicht gelesen werden",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        // Sticky bottom buttons
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth(),
+            shadowElevation = 8.dp,
+            color = MaterialTheme.colorScheme.surface
         ) {
-            OutlinedButton(
-                onClick = onBack,
-                modifier = Modifier.weight(1f),
-                enabled = !isLoading
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Zurück")
-            }
+                OutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.weight(1f),
+                    enabled = !isLoading
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Zurück")
+                }
 
-            Button(
-                onClick = onNext,
-                modifier = Modifier.weight(1f),
-                enabled = !isLoading
-            ) {
-                Text("Starten")
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                Button(
+                    onClick = onNext,
+                    modifier = Modifier.weight(1f),
+                    enabled = !isLoading
+                ) {
+                    Text("Starten")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                }
             }
         }
     }
@@ -1229,12 +1264,14 @@ fun CreateErrorStep(
     errorMessage: String,
     duplicateInfo: DuplicateInfo?,
     onRetry: () -> Unit,
-    onGoBack: () -> Unit
+    onGoBack: () -> Unit,
+    onForceBackup: (() -> Unit)? = null
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -1289,6 +1326,23 @@ fun CreateErrorStep(
             Icon(Icons.Default.Refresh, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("Erneut versuchen")
+        }
+
+        // Show "Trotzdem sichern" button only for duplicate User ID errors
+        if (duplicateInfo != null && onForceBackup != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onForceBackup,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFF9800)
+                )
+            ) {
+                Icon(Icons.Default.SaveAlt, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Trotzdem sichern")
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))

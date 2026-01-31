@@ -62,7 +62,9 @@ data class OnboardingUiState(
     val storagePermissionGranted: Boolean = false,
     val showPermissionRationale: Boolean = false,
     val requiresSAF: Boolean = false,
-    val showSAFPicker: Boolean = false
+    val showSAFPicker: Boolean = false,
+    // Completion flag - only set after persistence is confirmed
+    val onboardingMarkedComplete: Boolean = false
 )
 
 @HiltViewModel
@@ -388,47 +390,22 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            // For SAF (Android 11+), we already have the URI
-            val usingSAF = _uiState.value.backupDirectoryUri != null
-
-            if (usingSAF) {
-                // Save SAF URI
-                val uri = _uiState.value.backupDirectoryUri!!
-                appStateRepository.setBackupDirectory(uri.toString())
-                logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
-                _uiState.update { it.copy(isLoading = false, error = null) }
-                nextStep()
-            } else {
-                // Check permissions first (for legacy storage)
-                if (!permissionManager.hasStoragePermissions()) {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = "Speicherberechtigung erforderlich. Bitte erteile die Berechtigung."
-                        )
-                    }
-                    logRepository.logError("ONBOARDING", "Versuch Backup-Ordner zu erstellen ohne Berechtigung")
-                    return@launch
+            val uri = _uiState.value.backupDirectoryUri
+            if (uri == null) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        error = "Bitte wähle einen Backup-Ordner aus."
+                    )
                 }
-
-                // Create directory if it doesn't exist
-                val result = fileUtil.createDirectory(_uiState.value.backupDirectory)
-
-                if (result.isSuccess) {
-                    appStateRepository.setBackupDirectory(_uiState.value.backupDirectory)
-                    logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis gespeichert: ${_uiState.value.backupDirectory}")
-                    _uiState.update { it.copy(isLoading = false, error = null) }
-                    nextStep()
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            error = "Fehler beim Erstellen des Ordners: ${result.exceptionOrNull()?.message}"
-                        )
-                    }
-                    logRepository.logError("ONBOARDING", "Fehler beim Erstellen des Backup-Ordners", exception = result.exceptionOrNull() as? Exception)
-                }
+                return@launch
             }
+
+            // Save SAF URI
+            appStateRepository.setBackupDirectory(uri.toString())
+            logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
+            _uiState.update { it.copy(isLoading = false, error = null) }
+            nextStep()
         }
     }
 
@@ -528,9 +505,12 @@ class OnboardingViewModel @Inject constructor(
 
     fun completeOnboarding() {
         viewModelScope.launch {
+            // First, persist the onboarding completion status
             appStateRepository.setOnboardingCompleted(true)
             logRepository.logInfo("ONBOARDING", "Onboarding abgeschlossen")
-            _uiState.update { it.copy(currentStep = OnboardingStep.COMPLETE) }
+
+            // Only after persistence is complete, set the flag that triggers navigation
+            _uiState.update { it.copy(onboardingMarkedComplete = true) }
         }
     }
 

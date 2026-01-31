@@ -37,10 +37,9 @@ fun OnboardingScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
 
-    // Navigate when onboarding is complete
-    LaunchedEffect(uiState.currentStep) {
-        if (uiState.currentStep == OnboardingStep.COMPLETE) {
-            delay(500)
+    // Navigate only when onboarding is marked as completed (via explicit user action)
+    LaunchedEffect(uiState.onboardingMarkedComplete) {
+        if (uiState.onboardingMarkedComplete) {
             onComplete()
         }
     }
@@ -96,10 +95,10 @@ fun OnboardingScreen(
 
                 OnboardingStep.BACKUP_DIRECTORY ->
                     BackupDirectoryScreen(
-                        directory = uiState.backupDirectory,
+                        backupDirectoryUri = uiState.backupDirectoryUri,
                         isLoading = uiState.isLoading,
                         error = uiState.error,
-                        onDirectoryChanged = { viewModel.onBackupDirectoryChanged(it) },
+                        onRequestSAFPicker = { viewModel.requestSAFPicker() },
                         onSave = { viewModel.saveBackupDirectoryAndContinue() },
                         onBack = { viewModel.previousStep() }
                     )
@@ -463,15 +462,15 @@ fun SshSetupScreen(
 }
 
 // ============================================================
-// Screen 5: Backup-Ordner
+// Screen 5: Backup-Ordner (SAF-only)
 // ============================================================
 
 @Composable
 fun BackupDirectoryScreen(
-    directory: String,
+    backupDirectoryUri: android.net.Uri?,
     isLoading: Boolean,
     error: String?,
-    onDirectoryChanged: (String) -> Unit,
+    onRequestSAFPicker: () -> Unit,
     onSave: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -482,29 +481,74 @@ fun BackupDirectoryScreen(
         error = error,
         onBack = onBack
     ) {
-        OutlinedTextField(
-            value = directory,
-            onValueChange = onDirectoryChanged,
-            label = { Text("Pfad") },
+        // Display selected folder or placeholder
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
+            colors = CardDefaults.cardColors(
+                containerColor = if (backupDirectoryUri != null)
+                    MaterialTheme.colorScheme.primaryContainer
+                else
+                    MaterialTheme.colorScheme.surfaceVariant
+            ),
             shape = RoundedCornerShape(12.dp)
-        )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (backupDirectoryUri != null) Icons.Default.CheckCircle else Icons.Default.FolderOpen,
+                    contentDescription = null,
+                    tint = if (backupDirectoryUri != null)
+                        Color(0xFF4CAF50)
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (backupDirectoryUri != null) "Ordner ausgewählt" else "Kein Ordner ausgewählt",
+                        fontWeight = FontWeight.Medium,
+                        color = if (backupDirectoryUri != null)
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        else
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (backupDirectoryUri != null) {
+                        Text(
+                            text = backupDirectoryUri.lastPathSegment ?: backupDirectoryUri.toString(),
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        Text(
-            text = "Standard: /storage/emulated/0/bgo_backups/",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        )
+        // SAF picker button
+        OutlinedButton(
+            onClick = onRequestSAFPicker,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !isLoading,
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Default.FolderOpen, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (backupDirectoryUri != null) "Anderen Ordner wählen" else "Ordner auswählen")
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
 
+        // Continue button - only enabled when a folder is selected
         Button(
             onClick = onSave,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !isLoading && directory.isNotBlank(),
+            enabled = !isLoading && backupDirectoryUri != null,
             shape = RoundedCornerShape(12.dp)
         ) {
             if (isLoading) {
@@ -513,7 +557,7 @@ fun BackupDirectoryScreen(
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             } else {
-                Text("Ordner erstellen & Weiter")
+                Text("Weiter")
             }
         }
     }

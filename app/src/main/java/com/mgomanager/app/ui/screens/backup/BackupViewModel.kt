@@ -272,6 +272,95 @@ class BackupViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Force backup even with duplicate User ID
+     * Called when user clicks "Trotzdem sichern" after duplicate warning
+     */
+    fun forceBackupWithDuplicate() {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    currentStep = BackupWizardStep.BACKUP_PROGRESS,
+                    isLoading = true,
+                    progressMessage = "Backup wird erstellt (forceDuplicate)...",
+                    errorMessage = null
+                )
+            }
+
+            try {
+                val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
+                val backupPath = appStateRepository.getBackupDirectory() ?: "/storage/emulated/0/bgo_backups/"
+
+                val request = BackupRequest(
+                    accountName = _uiState.value.accountName,
+                    prefix = prefix,
+                    backupRootPath = backupPath,
+                    hasFacebookLink = _uiState.value.hasFacebookLink,
+                    fbUsername = if (_uiState.value.hasFacebookLink) _uiState.value.fbUsername else null,
+                    fbPassword = if (_uiState.value.hasFacebookLink) _uiState.value.fbPassword else null,
+                    fb2FA = if (_uiState.value.hasFacebookLink) _uiState.value.fb2FA else null,
+                    fbTempMail = if (_uiState.value.hasFacebookLink) _uiState.value.fbTempMail else null
+                )
+
+                // Call with forceDuplicate = true
+                val result = backupRepository.createBackup(request, forceDuplicate = true)
+
+                when (result) {
+                    is BackupResult.Success -> {
+                        _uiState.update {
+                            it.copy(
+                                currentStep = BackupWizardStep.SUCCESS,
+                                isLoading = false,
+                                backupResult = result,
+                                createdAccount = result.account,
+                                duplicateUserIdInfo = null
+                            )
+                        }
+                    }
+                    is BackupResult.PartialSuccess -> {
+                        _uiState.update {
+                            it.copy(
+                                currentStep = BackupWizardStep.SUCCESS,
+                                isLoading = false,
+                                backupResult = result,
+                                createdAccount = result.account,
+                                duplicateUserIdInfo = null
+                            )
+                        }
+                    }
+                    is BackupResult.DuplicateUserId -> {
+                        // Should not happen with forceDuplicate=true, but handle just in case
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                currentStep = BackupWizardStep.ERROR,
+                                errorMessage = "User ID bereits als '${result.existingAccountName}' vorhanden."
+                            )
+                        }
+                    }
+                    is BackupResult.Failure -> {
+                        _uiState.update {
+                            it.copy(
+                                currentStep = BackupWizardStep.ERROR,
+                                isLoading = false,
+                                errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("BACKUP_VM", "Force backup fehlgeschlagen", exception = e)
+                _uiState.update {
+                    it.copy(
+                        currentStep = BackupWizardStep.ERROR,
+                        isLoading = false,
+                        errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
+            }
+        }
+    }
+
     // ============================================================
     // Success Actions
     // ============================================================
