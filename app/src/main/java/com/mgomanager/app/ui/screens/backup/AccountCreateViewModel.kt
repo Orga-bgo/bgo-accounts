@@ -351,11 +351,13 @@ class AccountCreateViewModel @Inject constructor(
     }
 
     private fun handleError(step: String, exception: Throwable?) {
-        logRepository.logError(
-            "ACCOUNT_CREATE",
-            "Fehler bei Step '$step': ${exception?.message}",
-            exception = exception as? Exception
-        )
+        viewModelScope.launch {
+            logRepository.logError(
+                "ACCOUNT_CREATE",
+                "Fehler bei Step '$step': ${exception?.message}",
+                exception = exception as? Exception
+            )
+        }
 
         _uiState.update {
             it.copy(

@@ -124,7 +124,7 @@ fun OnboardingScreen(
 
             // Progress Indicator
             LinearProgressIndicator(
-                progress = { getProgressForStep(uiState.currentStep) },
+                progress = getProgressForStep(uiState.currentStep),
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.TopCenter),

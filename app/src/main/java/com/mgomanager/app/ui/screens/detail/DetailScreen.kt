@@ -526,7 +526,7 @@ fun DetailScreen(
                             Text("Hat Error")
                         }
 
-                        HorizontalDivider()
+                        Divider()
 
                         // Device IDs section
                         Text("Geräte-IDs", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
@@ -566,7 +566,7 @@ fun DetailScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        HorizontalDivider()
+                        Divider()
 
                         // Facebook section
                         Row(
@@ -606,7 +606,7 @@ fun DetailScreen(
                             )
                         }
 
-                        HorizontalDivider()
+                        Divider()
 
                         // Backup section
                         Text("Backup", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
