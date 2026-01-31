@@ -72,6 +72,14 @@ class AccountRepository @Inject constructor(
     }
 
     /**
+     * Insert new account entity directly
+     * @return ID of inserted account
+     */
+    suspend fun insertAccountEntity(entity: AccountEntity): Long {
+        return accountDao.insertAccount(entity)
+    }
+
+    /**
      * Update existing account
      */
     suspend fun updateAccount(account: Account) {
