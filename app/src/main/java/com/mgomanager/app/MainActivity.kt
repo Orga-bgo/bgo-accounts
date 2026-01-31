@@ -6,35 +6,34 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.mgomanager.app.data.local.preferences.SettingsDataStore
-import com.mgomanager.app.domain.util.PermissionManager
-import com.mgomanager.app.domain.util.RootUtil
-import com.mgomanager.app.domain.util.SSHSyncService
-import com.mgomanager.app.domain.util.ServerBackupCheckResult
+import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.ui.navigation.AppNavGraph
+import com.mgomanager.app.ui.screens.onboarding.OnboardingScreen
+import com.mgomanager.app.ui.screens.splash.SplashScreen
+import com.mgomanager.app.ui.screens.systemcheck.SystemCheckScreen
 import com.mgomanager.app.ui.theme.MGOManagerTheme
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.first
 import javax.inject.Inject
+
+/**
+ * Navigation routes for the app startup flow
+ */
+sealed class AppRoute(val route: String) {
+    object Splash : AppRoute("splash")
+    object Onboarding : AppRoute("onboarding")
+    object SystemCheck : AppRoute("systemCheck")
+    object Home : AppRoute("home")
+}
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     @Inject
-    lateinit var rootUtil: RootUtil
-
-    @Inject
-    lateinit var permissionManager: PermissionManager
-
-    @Inject
-    lateinit var settingsDataStore: SettingsDataStore
-
-    @Inject
-    lateinit var sshSyncService: SSHSyncService
+    lateinit var appStateRepository: AppStateRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,160 +41,84 @@ class MainActivity : ComponentActivity() {
         setContent {
             MGOManagerTheme {
                 val navController = rememberNavController()
+                var startDestination by remember { mutableStateOf<String?>(null) }
 
-                var isReady by remember { mutableStateOf(false) }
-                var showPermissionDialog by remember { mutableStateOf(false) }
-                var errorMessage by remember { mutableStateOf<String?>(null) }
-                var retryCounter by remember { mutableIntStateOf(0) }
-
-                // SSH server backup check state
-                var showServerBackupDialog by remember { mutableStateOf(false) }
-                var serverBackupDate by remember { mutableStateOf("") }
-
-                // Function to check prerequisites
-                suspend fun checkPrerequisites() {
-                    errorMessage = null
-                    isReady = false
-
-                    val isRooted = rootUtil.requestRootAccess()
-                    val hasPermissions = permissionManager.hasStoragePermissions()
-                    val isMGOInstalled = if (isRooted) rootUtil.isMonopolyGoInstalled() else false
-
-                    when {
-                        !isRooted -> errorMessage = "Root-Zugriff erforderlich"
-                        !hasPermissions -> showPermissionDialog = true
-                        !isMGOInstalled -> errorMessage = "Monopoly Go nicht installiert"
-                        else -> {
-                            isReady = true
-
-                            // Check for newer server backup if auto-check is enabled
-                            val autoCheckEnabled = settingsDataStore.sshAutoCheckOnStart.first()
-                            if (autoCheckEnabled) {
-                                val serverResult = sshSyncService.checkLatestServerBackup()
-                                if (serverResult is ServerBackupCheckResult.Found) {
-                                    val localDate = sshSyncService.getLatestLocalBackupDate()
-                                    if (localDate == null || serverResult.date.after(localDate)) {
-                                        serverBackupDate = sshSyncService.formatDate(serverResult.date)
-                                        showServerBackupDialog = true
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                LaunchedEffect(retryCounter) {
-                    checkPrerequisites()
-                }
-
-                // Recheck permissions when resuming from settings
-                DisposableEffect(Unit) {
-                    val listener = object : android.app.Application.ActivityLifecycleCallbacks {
-                        override fun onActivityResumed(activity: android.app.Activity) {
-                            if (activity == this@MainActivity && showPermissionDialog) {
-                                if (permissionManager.hasStoragePermissions()) {
-                                    showPermissionDialog = false
-                                    if (errorMessage == null) {
-                                        isReady = true
-                                    }
-                                }
-                            }
-                        }
-                        override fun onActivityPaused(activity: android.app.Activity) {}
-                        override fun onActivityStarted(activity: android.app.Activity) {}
-                        override fun onActivityStopped(activity: android.app.Activity) {}
-                        override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: Bundle?) {}
-                        override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: Bundle) {}
-                        override fun onActivityDestroyed(activity: android.app.Activity) {}
-                    }
-                    application.registerActivityLifecycleCallbacks(listener)
-                    onDispose {
-                        application.unregisterActivityLifecycleCallbacks(listener)
-                    }
+                // Determine start destination based on onboarding status
+                LaunchedEffect(Unit) {
+                    startDestination = determineStartDestination()
                 }
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    when {
-                        errorMessage != null -> {
-                            // Show error dialog with retry option
-                            AlertDialog(
-                                onDismissRequest = { },
-                                title = { Text("Fehler") },
-                                text = { Text(errorMessage!!) },
-                                confirmButton = {
-                                    TextButton(onClick = { retryCounter++ }) {
-                                        Text("Erneut versuchen")
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { finish() }) {
-                                        Text("Schließen")
-                                    }
-                                }
-                            )
-                        }
-                        showPermissionDialog -> {
-                            // Show permission request dialog
-                            AlertDialog(
-                                onDismissRequest = { },
-                                title = { Text("Berechtigungen erforderlich") },
-                                text = {
-                                    Text("Diese App benötigt Zugriff auf den Speicher, um Backups zu erstellen. Bitte erteile die erforderlichen Berechtigungen in den Einstellungen.")
-                                },
-                                confirmButton = {
-                                    TextButton(onClick = {
-                                        permissionManager.requestStoragePermissions(this@MainActivity)
-                                    }) {
-                                        Text("Berechtigungen erteilen")
-                                    }
-                                },
-                                dismissButton = {
-                                    TextButton(onClick = { finish() }) {
-                                        Text("Abbrechen")
-                                    }
-                                }
-                            )
-                        }
-                        isReady -> {
-                            AppNavGraph(navController)
-
-                            // Show server backup dialog if needed
-                            if (showServerBackupDialog) {
-                                AlertDialog(
-                                    onDismissRequest = { showServerBackupDialog = false },
-                                    title = { Text("Server-Backup verfügbar") },
-                                    text = {
-                                        Text("Ein neueres Backup wurde auf dem Server gefunden ($serverBackupDate).\n\nMöchtest du es importieren?")
-                                    },
-                                    confirmButton = {
-                                        TextButton(onClick = {
-                                            showServerBackupDialog = false
-                                            // Navigate to settings where import can be triggered
-                                            navController.navigate("settings")
-                                        }) {
-                                            Text("Zu Einstellungen")
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { showServerBackupDialog = false }) {
-                                            Text("Später")
+                    startDestination?.let { destination ->
+                        NavHost(
+                            navController = navController,
+                            startDestination = AppRoute.Splash.route
+                        ) {
+                            // Splash Screen (500ms)
+                            composable(AppRoute.Splash.route) {
+                                SplashScreen(
+                                    onSplashComplete = {
+                                        navController.navigate(destination) {
+                                            popUpTo(AppRoute.Splash.route) { inclusive = true }
                                         }
                                     }
                                 )
                             }
+
+                            // Onboarding Flow (first launch)
+                            composable(AppRoute.Onboarding.route) {
+                                OnboardingScreen(
+                                    onComplete = {
+                                        // After onboarding, go to system check
+                                        navController.navigate(AppRoute.SystemCheck.route) {
+                                            popUpTo(AppRoute.Onboarding.route) { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+
+                            // System Check Screen (normal app start)
+                            composable(AppRoute.SystemCheck.route) {
+                                SystemCheckScreen(
+                                    onComplete = {
+                                        navController.navigate(AppRoute.Home.route) {
+                                            popUpTo(AppRoute.SystemCheck.route) { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+
+                            // Main App (Home and nested navigation)
+                            composable(AppRoute.Home.route) {
+                                // Create a nested NavHost for the main app
+                                val mainNavController = rememberNavController()
+                                AppNavGraph(mainNavController)
+                            }
                         }
-                        else -> Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator()
-                        }
+                    } ?: run {
+                        // Loading state while determining start destination
+                        SplashScreen(onSplashComplete = {})
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Determines the start destination based on onboarding status:
+     * - First launch or onboarding not completed → Onboarding
+     * - Otherwise → System Check
+     */
+    private suspend fun determineStartDestination(): String {
+        val isFirstLaunch = appStateRepository.isFirstLaunch()
+        val onboardingCompleted = appStateRepository.isOnboardingCompleted()
+
+        return when {
+            isFirstLaunch || !onboardingCompleted -> AppRoute.Onboarding.route
+            else -> AppRoute.SystemCheck.route
         }
     }
 }

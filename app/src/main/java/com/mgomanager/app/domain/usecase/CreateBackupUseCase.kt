@@ -53,8 +53,14 @@ class CreateBackupUseCase @Inject constructor(
                 throw it
             }
 
+            // Step 2.5: Handle account name duplicates (auto-rename with _1, _2, etc.)
+            val finalAccountName = findUniqueAccountName(request.accountName, request.prefix, request.backupRootPath)
+            if (finalAccountName != request.accountName) {
+                logRepository.logInfo("BACKUP", "Account-Name umbenannt: ${request.accountName} -> $finalAccountName")
+            }
+
             // Step 3: Create backup directory
-            val backupPath = "${request.backupRootPath}${request.prefix}${request.accountName}/"
+            val backupPath = "${request.backupRootPath}${request.prefix}$finalAccountName/"
             val backupDir = File(backupPath)
 
             val createDirResult = rootUtil.executeCommand("mkdir -p $backupPath")
@@ -85,7 +91,7 @@ class CreateBackupUseCase @Inject constructor(
             if (!forceDuplicate) {
                 val existingAccount = accountRepository.getAccountByUserId(extractedIds.userId)
                 if (existingAccount != null) {
-                    logRepository.logWarning("BACKUP", "Duplicate User ID found: ${extractedIds.userId} exists as ${existingAccount.fullName}", request.accountName)
+                    logRepository.logWarning("BACKUP", "Duplicate User ID found: ${extractedIds.userId} exists as ${existingAccount.fullName}", finalAccountName)
                     // Clean up the backup directory we just created
                     rootUtil.executeCommand("rm -rf $backupPath")
                     return@withContext BackupResult.DuplicateUserId(
@@ -95,18 +101,24 @@ class CreateBackupUseCase @Inject constructor(
                 }
             }
 
-            // Step 7: Extract SSAID
+            // Step 7: Extract SSAID (MANDATORY per P3 spec)
             val ssaidFile = File("$backupPath/settings_ssaid.xml")
-            val ssaid = if (ssaidFile.exists()) {
-                idExtractor.extractSsaid(ssaidFile)
-            } else {
-                "nicht vorhanden"
+            if (!ssaidFile.exists()) {
+                logRepository.logError("BACKUP", "SSAID-Datei nicht vorhanden (MANDATORY)", finalAccountName)
+                rootUtil.executeCommand("rm -rf $backupPath")
+                throw Exception("SSAID-Datei konnte nicht kopiert werden (MANDATORY)")
+            }
+            val ssaid = idExtractor.extractSsaid(ssaidFile)
+            if (ssaid == "nicht vorhanden" || ssaid.isBlank()) {
+                logRepository.logError("BACKUP", "SSAID konnte nicht extrahiert werden (MANDATORY)", finalAccountName)
+                rootUtil.executeCommand("rm -rf $backupPath")
+                throw Exception("SSAID konnte nicht extrahiert werden (MANDATORY)")
             }
 
             // Step 8: Create Account object
             val now = System.currentTimeMillis()
             val account = Account(
-                accountName = request.accountName,
+                accountName = finalAccountName,
                 prefix = request.prefix,
                 createdAt = now,
                 lastPlayedAt = now,
@@ -131,16 +143,16 @@ class CreateBackupUseCase @Inject constructor(
 
             logRepository.logInfo(
                 "BACKUP",
-                "Backup erfolgreich abgeschlossen für ${request.accountName}",
-                request.accountName
+                "Backup erfolgreich abgeschlossen für $finalAccountName",
+                finalAccountName
             )
 
-            // Check if any IDs are missing
+            // Check if any optional IDs are missing (userId and SSAID are mandatory)
             val missingIds = mutableListOf<String>()
             if (extractedIds.gaid == "nicht vorhanden") missingIds.add("GAID")
             if (extractedIds.deviceToken == "nicht vorhanden") missingIds.add("Device Token")
             if (extractedIds.appSetId == "nicht vorhanden") missingIds.add("App Set ID")
-            if (ssaid == "nicht vorhanden") missingIds.add("SSAID")
+            // Note: SSAID is mandatory and would have caused abort above if missing
 
             if (missingIds.isNotEmpty()) {
                 BackupResult.PartialSuccess(account, missingIds)
@@ -162,6 +174,32 @@ class CreateBackupUseCase @Inject constructor(
             val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
             logRepository.logError("BACKUP", "Fehler beim Kopieren: $source - $errorMsg", accountName)
             throw Exception("Verzeichnis konnte nicht kopiert werden: $source - $errorMsg")
+        }
+    }
+
+    /**
+     * Find a unique account name by checking DB and backup folder
+     * If name exists, append _1, _2, etc. until unique
+     */
+    private suspend fun findUniqueAccountName(baseName: String, prefix: String, backupRootPath: String): String {
+        var candidateName = baseName
+        var suffix = 0
+
+        while (true) {
+            // Check if name exists in database
+            val existingInDb = accountRepository.getAccountByName(candidateName)
+
+            // Check if backup folder already exists
+            val backupPath = "$backupRootPath$prefix$candidateName/"
+            val folderExists = File(backupPath).exists()
+
+            if (existingInDb == null && !folderExists) {
+                return candidateName
+            }
+
+            // Name is taken, try with suffix
+            suffix++
+            candidateName = "${baseName}_$suffix"
         }
     }
 }

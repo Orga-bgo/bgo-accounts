@@ -1,9 +1,11 @@
 package com.mgomanager.app.ui.screens.settings
 
 import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mgomanager.app.data.local.preferences.SettingsDataStore
+import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.usecase.ExportImportUseCase
 import com.mgomanager.app.domain.util.RootUtil
 import com.mgomanager.app.domain.util.SSHSyncService
@@ -20,26 +22,36 @@ data class SettingsUiState(
     val isRootAvailable: Boolean = false,
     val appStartCount: Int = 0,
     val prefixSaved: Boolean = false,
+    val prefixError: String? = null,
     val pathSaved: Boolean = false,
     val exportResult: String? = null,
     val importResult: String? = null,
     val isExporting: Boolean = false,
     val isImporting: Boolean = false,
+    val showImportWarning: Boolean = false,
     // SSH settings
+    val sshEnabled: Boolean = false,
+    val sshHost: String = "",
+    val sshPort: String = "22",
+    val sshUsername: String = "",
+    val sshPassword: String = "",
+    val sshAutoCheckOnStart: Boolean = false,
+    val sshHostSaved: Boolean = false,
+    val sshPortSaved: Boolean = false,
+    val sshUsernameSaved: Boolean = false,
+    val sshPasswordSaved: Boolean = false,
+    val sshTestResult: String? = null,
+    val isSshTesting: Boolean = false,
+    // Legacy fields for compatibility
     val sshPrivateKeyPath: String = "/storage/emulated/0/.ssh/id_ed25519",
     val sshServer: String = "",
     val sshBackupPath: String = "/home/user/monopolygo/backups/",
-    val sshPassword: String = "",
-    val sshAuthMethod: String = "key_only", // key_only, password_only, try_both
-    val sshAutoCheckOnStart: Boolean = false,
+    val sshAuthMethod: String = "key_only",
     val sshAutoUploadOnExport: Boolean = false,
     val sshLastSyncTimestamp: Long = 0L,
     val sshKeyPathSaved: Boolean = false,
     val sshServerSaved: Boolean = false,
-    val sshBackupPathSaved: Boolean = false,
-    val sshPasswordSaved: Boolean = false,
-    val sshTestResult: String? = null,
-    val isSshTesting: Boolean = false
+    val sshBackupPathSaved: Boolean = false
 )
 
 @HiltViewModel
@@ -48,11 +60,15 @@ class SettingsViewModel @Inject constructor(
     private val rootUtil: RootUtil,
     private val exportImportUseCase: ExportImportUseCase,
     private val sshSyncService: SSHSyncService,
+    private val logRepository: LogRepository,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    // Invalid path characters for prefix validation
+    private val invalidPrefixChars = setOf('/', '\\', ':', '*', '?', '"', '<', '>', '|')
 
     init {
         loadSettings()
@@ -137,52 +153,138 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Update prefix with validation per P6 spec:
+     * - not empty
+     * - no path characters
+     */
     fun updatePrefix(prefix: String) {
         viewModelScope.launch {
+            // Validate prefix
+            when {
+                prefix.isBlank() -> {
+                    _uiState.update { it.copy(prefixError = "Präfix darf nicht leer sein") }
+                    return@launch
+                }
+                prefix.any { it in invalidPrefixChars } -> {
+                    _uiState.update { it.copy(prefixError = "Präfix enthält ungültige Zeichen") }
+                    return@launch
+                }
+            }
+
             settingsDataStore.setAccountPrefix(prefix)
-            _uiState.update { it.copy(prefixSaved = true) }
+            logRepository.logInfo("SETTINGS", "Präfix geändert: $prefix")
+            _uiState.update { it.copy(prefixSaved = true, prefixError = null) }
         }
     }
 
     fun updateBackupPath(path: String) {
         viewModelScope.launch {
             settingsDataStore.setBackupRootPath(path)
+            logRepository.logInfo("SETTINGS", "Backup-Pfad geändert: $path")
             _uiState.update { it.copy(pathSaved = true) }
         }
     }
 
     fun resetPrefixSaved() {
-        _uiState.update { it.copy(prefixSaved = false) }
+        _uiState.update { it.copy(prefixSaved = false, prefixError = null) }
     }
 
     fun resetPathSaved() {
         _uiState.update { it.copy(pathSaved = false) }
     }
 
+    fun showImportWarning() {
+        _uiState.update { it.copy(showImportWarning = true) }
+    }
+
+    fun hideImportWarning() {
+        _uiState.update { it.copy(showImportWarning = false) }
+    }
+
     fun exportData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isExporting = true) }
-            val result = exportImportUseCase.exportData(context)
-            _uiState.update {
-                it.copy(
-                    isExporting = false,
-                    exportResult = result.getOrElse { e -> "Export fehlgeschlagen: ${e.message}" }
-                )
+            logRepository.logInfo("SETTINGS", "Starte Export aller Backups")
+
+            try {
+                val result = exportImportUseCase.exportData(context)
+                if (result.isSuccess) {
+                    logRepository.logInfo("SETTINGS", "Export erfolgreich: ${result.getOrNull()}")
+                    _uiState.update {
+                        it.copy(
+                            isExporting = false,
+                            exportResult = result.getOrNull()
+                        )
+                    }
+                } else {
+                    logRepository.logError("SETTINGS", "Export fehlgeschlagen", result.exceptionOrNull()?.message)
+                    showErrorToast()
+                    _uiState.update {
+                        it.copy(
+                            isExporting = false,
+                            exportResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "Export Exception: ${e.message}", null, e)
+                showErrorToast()
+                _uiState.update {
+                    it.copy(
+                        isExporting = false,
+                        exportResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
             }
         }
     }
 
-    fun importData() {
+    fun confirmImport() {
+        _uiState.update { it.copy(showImportWarning = false) }
+        importData()
+    }
+
+    private fun importData() {
         viewModelScope.launch {
             _uiState.update { it.copy(isImporting = true) }
-            val result = exportImportUseCase.importData(context)
-            _uiState.update {
-                it.copy(
-                    isImporting = false,
-                    importResult = if (result.isSuccess) "Import erfolgreich!" else "Import fehlgeschlagen: ${result.exceptionOrNull()?.message}"
-                )
+            logRepository.logInfo("SETTINGS", "Starte Import von Backups")
+
+            try {
+                val result = exportImportUseCase.importData(context)
+                if (result.isSuccess) {
+                    logRepository.logInfo("SETTINGS", "Import erfolgreich")
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            importResult = "Import erfolgreich!"
+                        )
+                    }
+                } else {
+                    logRepository.logError("SETTINGS", "Import fehlgeschlagen", result.exceptionOrNull()?.message)
+                    showErrorToast()
+                    _uiState.update {
+                        it.copy(
+                            isImporting = false,
+                            importResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "Import Exception: ${e.message}", null, e)
+                showErrorToast()
+                _uiState.update {
+                    it.copy(
+                        isImporting = false,
+                        importResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
             }
         }
+    }
+
+    private fun showErrorToast() {
+        Toast.makeText(context, "Da ist etwas schief gelaufen.. Prüfe den Log", Toast.LENGTH_LONG).show()
     }
 
     fun clearExportResult() {
@@ -193,8 +295,70 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(importResult = null) }
     }
 
-    // ========== SSH Settings Functions ==========
+    // ========== SSH Settings Functions (P6 spec) ==========
 
+    fun updateSshEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            // Toggle only saves to DataStore, does not trigger test
+            _uiState.update { it.copy(sshEnabled = enabled) }
+            logRepository.logInfo("SETTINGS", "SSH ${if (enabled) "aktiviert" else "deaktiviert"}")
+        }
+    }
+
+    fun updateSshHost(host: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(sshHost = host, sshHostSaved = false) }
+        }
+    }
+
+    fun saveSshHost() {
+        viewModelScope.launch {
+            logRepository.logInfo("SETTINGS", "SSH Host gespeichert")
+            _uiState.update { it.copy(sshHostSaved = true) }
+        }
+    }
+
+    fun updateSshPort(port: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(sshPort = port, sshPortSaved = false) }
+        }
+    }
+
+    fun saveSshPort() {
+        viewModelScope.launch {
+            logRepository.logInfo("SETTINGS", "SSH Port gespeichert")
+            _uiState.update { it.copy(sshPortSaved = true) }
+        }
+    }
+
+    fun updateSshUsername(username: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(sshUsername = username, sshUsernameSaved = false) }
+        }
+    }
+
+    fun saveSshUsername() {
+        viewModelScope.launch {
+            logRepository.logInfo("SETTINGS", "SSH Benutzername gespeichert")
+            _uiState.update { it.copy(sshUsernameSaved = true) }
+        }
+    }
+
+    fun updateSshPasswordField(password: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(sshPassword = password, sshPasswordSaved = false) }
+        }
+    }
+
+    fun saveSshPassword() {
+        viewModelScope.launch {
+            settingsDataStore.setSshPassword(_uiState.value.sshPassword)
+            logRepository.logInfo("SETTINGS", "SSH Passwort gespeichert")
+            _uiState.update { it.copy(sshPasswordSaved = true) }
+        }
+    }
+
+    // Legacy SSH functions for compatibility
     fun updateSshPrivateKeyPath(path: String) {
         viewModelScope.launch {
             settingsDataStore.setSshPrivateKeyPath(path)
@@ -248,6 +412,7 @@ class SettingsViewModel @Inject constructor(
     fun updateSshAutoCheckOnStart(enabled: Boolean) {
         viewModelScope.launch {
             settingsDataStore.setSshAutoCheckOnStart(enabled)
+            logRepository.logInfo("SETTINGS", "SSH Auto-Check beim Start ${if (enabled) "aktiviert" else "deaktiviert"}")
         }
     }
 
@@ -257,15 +422,35 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Manual SSH connection test per P6 spec
+     * Success -> Toast "Verbindung erfolgreich"
+     * Failure -> Log(ERROR) + standard error message
+     */
     fun testSshConnection() {
         viewModelScope.launch {
             _uiState.update { it.copy(isSshTesting = true, sshTestResult = null) }
-            val result = sshSyncService.testConnection()
-            val message = when (result) {
-                is SSHOperationResult.Success -> result.message
-                is SSHOperationResult.Error -> result.message
+            logRepository.logInfo("SETTINGS", "SSH-Verbindungstest gestartet")
+
+            try {
+                val result = sshSyncService.testConnection()
+                when (result) {
+                    is SSHOperationResult.Success -> {
+                        logRepository.logInfo("SETTINGS", "SSH-Verbindung erfolgreich")
+                        Toast.makeText(context, "Verbindung erfolgreich", Toast.LENGTH_SHORT).show()
+                        _uiState.update { it.copy(isSshTesting = false, sshTestResult = "Verbindung erfolgreich") }
+                    }
+                    is SSHOperationResult.Error -> {
+                        logRepository.logError("SETTINGS", "SSH-Verbindung fehlgeschlagen: ${result.message}", null)
+                        showErrorToast()
+                        _uiState.update { it.copy(isSshTesting = false, sshTestResult = "Da ist etwas schief gelaufen.. Prüfe den Log") }
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "SSH-Test Exception: ${e.message}", null, e)
+                showErrorToast()
+                _uiState.update { it.copy(isSshTesting = false, sshTestResult = "Da ist etwas schief gelaufen.. Prüfe den Log") }
             }
-            _uiState.update { it.copy(isSshTesting = false, sshTestResult = message) }
         }
     }
 

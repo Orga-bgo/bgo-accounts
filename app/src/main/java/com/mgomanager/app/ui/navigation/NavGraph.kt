@@ -6,6 +6,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.mgomanager.app.ui.screens.backup.BackupScreen
 import com.mgomanager.app.ui.screens.detail.DetailScreen
 import com.mgomanager.app.ui.screens.home.HomeScreen
 import com.mgomanager.app.ui.screens.settings.SettingsScreen
@@ -14,6 +15,7 @@ import com.mgomanager.app.ui.screens.idcompare.IdCompareScreen
 
 sealed class Screen(val route: String) {
     object Home : Screen("home")
+    object Backup : Screen("backup")
     object Detail : Screen("detail/{accountId}") {
         fun createRoute(accountId: Long) = "detail/$accountId"
     }
@@ -27,6 +29,10 @@ fun AppNavGraph(navController: NavHostController) {
     NavHost(navController = navController, startDestination = Screen.Home.route) {
         composable(Screen.Home.route) {
             HomeScreen(navController = navController)
+        }
+
+        composable(Screen.Backup.route) {
+            BackupScreen(navController = navController)
         }
 
         composable(
