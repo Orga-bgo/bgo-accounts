@@ -5,6 +5,7 @@ import com.mgomanager.app.data.model.BackupResult
 import com.mgomanager.app.data.repository.AccountRepository
 import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.util.FilePermissionManager
+import com.mgomanager.app.domain.util.FilePermissions
 import com.mgomanager.app.domain.util.IdExtractor
 import com.mgomanager.app.domain.util.RootUtil
 import kotlinx.coroutines.Dispatchers
@@ -43,15 +44,20 @@ class CreateBackupUseCase @Inject constructor(
         try {
             logRepository.logInfo("BACKUP", "Starte Backup für ${request.accountName}")
 
+            // Step 0: Ensure root access is ready (critical for Magisk timing)
+            val rootReady = rootUtil.requestRootAccess()
+            if (!rootReady) {
+                logRepository.logError("BACKUP", "Root-Zugriff konnte nicht angefordert werden", request.accountName)
+                throw Exception("Root-Zugriff nicht verfügbar")
+            }
+            logRepository.logInfo("BACKUP", "Root-Zugriff bestätigt", request.accountName)
+
             // Step 1: Force stop Monopoly Go
             rootUtil.forceStopMonopolyGo().getOrThrow()
             logRepository.logInfo("BACKUP", "Monopoly Go gestoppt", request.accountName)
 
-            // Step 2: Read file permissions
-            val permissions = permissionManager.getFilePermissions(MGO_FILES_PATH).getOrElse {
-                logRepository.logError("BACKUP", "Fehler beim Lesen der Berechtigungen", request.accountName, it as? Exception)
-                throw it
-            }
+            // Step 2: Read file permissions (with retry for timing issues)
+            val permissions = readFilePermissionsWithRetry(MGO_FILES_PATH, request.accountName)
 
             // Step 2.5: Handle account name duplicates (auto-rename with _1, _2, etc.)
             val finalAccountName = findUniqueAccountName(request.accountName, request.prefix, request.backupRootPath)
@@ -138,12 +144,15 @@ class CreateBackupUseCase @Inject constructor(
                 filePermissions = permissions.permissions
             )
 
-            // Step 9: Save to database
-            accountRepository.insertAccount(account)
+            // Step 9: Save to database and get the generated ID
+            val insertedId = accountRepository.insertAccount(account)
+
+            // Create account with the actual database ID
+            val accountWithId = account.copy(id = insertedId)
 
             logRepository.logInfo(
                 "BACKUP",
-                "Backup erfolgreich abgeschlossen für $finalAccountName",
+                "Backup erfolgreich abgeschlossen für $finalAccountName (ID: $insertedId)",
                 finalAccountName
             )
 
@@ -155,9 +164,9 @@ class CreateBackupUseCase @Inject constructor(
             // Note: SSAID is mandatory and would have caused abort above if missing
 
             if (missingIds.isNotEmpty()) {
-                BackupResult.PartialSuccess(account, missingIds)
+                BackupResult.PartialSuccess(accountWithId, missingIds)
             } else {
-                BackupResult.Success(account)
+                BackupResult.Success(accountWithId)
             }
 
         } catch (e: Exception) {
@@ -175,6 +184,50 @@ class CreateBackupUseCase @Inject constructor(
             logRepository.logError("BACKUP", "Fehler beim Kopieren: $source - $errorMsg", accountName)
             throw Exception("Verzeichnis konnte nicht kopiert werden: $source - $errorMsg")
         }
+    }
+
+    /**
+     * Read file permissions with retry mechanism for root timing issues
+     * Retries up to 3 times with exponential backoff (500ms, 1s, 2s)
+     */
+    private suspend fun readFilePermissionsWithRetry(
+        path: String,
+        accountName: String,
+        maxRetries: Int = 3
+    ): FilePermissions {
+        var lastException: Throwable? = null
+
+        for (attempt in 1..maxRetries) {
+            val result = permissionManager.getFilePermissions(path)
+
+            if (result.isSuccess) {
+                if (attempt > 1) {
+                    logRepository.logInfo("BACKUP", "Berechtigungen gelesen (Versuch $attempt)", accountName)
+                }
+                return result.getOrThrow()
+            }
+
+            lastException = result.exceptionOrNull()
+            logRepository.logWarning(
+                "BACKUP",
+                "Fehler beim Lesen der Berechtigungen (Versuch $attempt/$maxRetries): ${lastException?.message}",
+                accountName
+            )
+
+            if (attempt < maxRetries) {
+                // Exponential backoff: 500ms, 1s, 2s
+                val delayMs = 500L * (1 shl (attempt - 1))
+                kotlinx.coroutines.delay(delayMs)
+            }
+        }
+
+        logRepository.logError(
+            "BACKUP",
+            "Berechtigungen konnten nach $maxRetries Versuchen nicht gelesen werden",
+            accountName,
+            lastException as? Exception
+        )
+        throw lastException ?: Exception("Fehler beim Lesen der Berechtigungen")
     }
 
     /**

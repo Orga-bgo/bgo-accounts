@@ -15,11 +15,15 @@ import androidx.compose.ui.unit.sp
 /**
  * Global header component with app name and help button
  * Used across all main screens
+ *
+ * @param subTitle Optional subtitle shown in secondary header
+ * @param actions Optional composable for additional action icons (shown before help icon)
  */
 @Composable
 fun GlobalHeader(
     modifier: Modifier = Modifier,
-    subTitle: String? = null
+    subTitle: String? = null,
+    actions: @Composable (RowScope.() -> Unit)? = null
 ) {
     var showHelpDialog by remember { mutableStateOf(false) }
 
@@ -42,14 +46,22 @@ fun GlobalHeader(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
-                IconButton(
-                    onClick = { showHelpDialog = true }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.HelpOutline,
-                        contentDescription = "Hilfe",
-                        tint = MaterialTheme.colorScheme.onPrimary
-                    )
+                    // Custom actions (optional)
+                    actions?.invoke(this)
+
+                    // Help button (always shown)
+                    IconButton(
+                        onClick = { showHelpDialog = true }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.HelpOutline,
+                            contentDescription = "Hilfe",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
                 }
             }
         }

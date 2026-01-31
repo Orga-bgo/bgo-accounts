@@ -23,6 +23,7 @@ import com.mgomanager.app.data.model.BackupResult
 import com.mgomanager.app.ui.components.BackupDialog
 import com.mgomanager.app.ui.components.GlobalHeader
 import com.mgomanager.app.ui.navigation.Screen
+import androidx.compose.foundation.layout.PaddingValues
 
 @Composable
 fun HomeScreen(
@@ -31,58 +32,215 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var sortDropdownExpanded by remember { mutableStateOf(false) }
+    var showSearchBar by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
-            GlobalHeader(subTitle = "Accounts")
+            GlobalHeader(
+                subTitle = "Accounts",
+                actions = {
+                    // Search Icon
+                    IconButton(
+                        onClick = { showSearchBar = !showSearchBar }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Suchen",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                    // Sort Icon with dropdown
+                    Box {
+                        IconButton(
+                            onClick = { sortDropdownExpanded = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Sort,
+                                contentDescription = "Sortieren",
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = sortDropdownExpanded,
+                            onDismissRequest = { sortDropdownExpanded = false }
+                        ) {
+                            SortOption.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.displayName) },
+                                    onClick = {
+                                        viewModel.onSortOptionChange(option)
+                                        sortDropdownExpanded = false
+                                    },
+                                    leadingIcon = {
+                                        if (uiState.sortOption == option) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "Ausgewählt",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text(if (uiState.sortDirection == SortDirection.ASC) "Aufsteigend" else "Absteigend") },
+                                onClick = { viewModel.toggleSortDirection() },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (uiState.sortDirection == SortDirection.ASC) {
+                                            Icons.Default.ArrowUpward
+                                        } else {
+                                            Icons.Default.ArrowDownward
+                                        },
+                                        contentDescription = null
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            )
         }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(16.dp)
         ) {
-            // Current Account Section
-            CurrentAccountSection(
-                currentAccount = uiState.currentAccount,
-                isLoading = uiState.isLoading,
-                onLaunchMonopolyGo = { accountId ->
-                    viewModel.launchMonopolyGoWithAccountState(accountId)
+            // Search Bar (collapsible)
+            if (showSearchBar || uiState.searchQuery.isNotEmpty()) {
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = { viewModel.onSearchQueryChange(it) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = { Text("Account suchen...") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "Suchen")
+                    },
+                    trailingIcon = {
+                        if (uiState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.onSearchQueryChange("") }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Löschen")
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+
+            // Content in a scrollable LazyColumn
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                // Current Account Section
+                item {
+                    CurrentAccountSection(
+                        currentAccount = uiState.currentAccount,
+                        isLoading = uiState.isLoading,
+                        onLaunchMonopolyGo = { accountId ->
+                            viewModel.launchMonopolyGoWithAccountState(accountId)
+                        }
+                    )
                 }
-            )
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Search and Sort Section
-            SearchAndSortSection(
-                searchQuery = uiState.searchQuery,
-                sortOption = uiState.sortOption,
-                sortDirection = uiState.sortDirection,
-                onSearchQueryChange = { viewModel.onSearchQueryChange(it) },
-                onSortOptionChange = { viewModel.onSortOptionChange(it) },
-                onToggleSortDirection = { viewModel.toggleSortDirection() },
-                sortDropdownExpanded = sortDropdownExpanded,
-                onSortDropdownExpandedChange = { sortDropdownExpanded = it }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Account List Section
-            Text(
-                text = "Accounts (${uiState.totalCount})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-
-            AccountListSection(
-                accounts = uiState.accounts,
-                searchQuery = uiState.searchQuery,
-                onAccountClick = { accountId ->
-                    navController.navigate(Screen.Detail.createRoute(accountId))
+                // Sort info (inline, compact)
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Accounts (${uiState.totalCount})",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${uiState.sortOption.displayName} ${uiState.sortDirection.name}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
                 }
-            )
+
+                // Account List
+                if (uiState.accounts.isEmpty() && uiState.searchQuery.isNotBlank()) {
+                    // No search results
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.SearchOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Kein Account mit diesem Namen gefunden.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else if (uiState.accounts.isEmpty()) {
+                    // No accounts at all
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Default.FolderOff,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Noch keine Backups vorhanden.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Account list items
+                    items(uiState.accounts, key = { it.id }) { account ->
+                        AccountListCard(
+                            account = account,
+                            onClick = { navController.navigate(Screen.Detail.createRoute(account.id)) }
+                        )
+                    }
+                }
+
+                // Bottom padding for nav bar
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
         }
     }
 

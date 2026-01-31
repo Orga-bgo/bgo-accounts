@@ -450,6 +450,79 @@ class AccountCreateViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Force backup even with duplicate User ID
+     * Called when user clicks "Trotzdem sichern" after duplicate warning
+     */
+    fun forceBackupWithDuplicate() {
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    currentStep = AccountCreateStep.PROGRESS_BACKUP,
+                    progressMessage = "Backup wird erstellt (forceDuplicate)...",
+                    progressPercent = 0.85f,
+                    errorMessage = null
+                )
+            }
+
+            try {
+                val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
+                val backupPath = appStateRepository.getBackupDirectory() ?: "/storage/emulated/0/bgo_backups/"
+
+                val request = BackupRequest(
+                    accountName = _uiState.value.accountName,
+                    prefix = prefix,
+                    backupRootPath = backupPath,
+                    hasFacebookLink = false,
+                    fbUsername = null,
+                    fbPassword = null,
+                    fb2FA = null,
+                    fbTempMail = null
+                )
+
+                // Call with forceDuplicate = true
+                val result = backupRepository.createBackup(request, forceDuplicate = true)
+
+                when (result) {
+                    is BackupResult.Success -> {
+                        _uiState.update {
+                            it.copy(
+                                currentStep = AccountCreateStep.SUCCESS,
+                                createdAccount = result.account,
+                                progressPercent = 1f,
+                                duplicateUserIdInfo = null
+                            )
+                        }
+                    }
+                    is BackupResult.PartialSuccess -> {
+                        _uiState.update {
+                            it.copy(
+                                currentStep = AccountCreateStep.SUCCESS,
+                                createdAccount = result.account,
+                                progressPercent = 1f,
+                                duplicateUserIdInfo = null
+                            )
+                        }
+                    }
+                    is BackupResult.DuplicateUserId -> {
+                        // Should not happen with forceDuplicate=true
+                        _uiState.update {
+                            it.copy(
+                                currentStep = AccountCreateStep.ERROR,
+                                errorMessage = "User ID bereits als '${result.existingAccountName}' vorhanden."
+                            )
+                        }
+                    }
+                    is BackupResult.Failure -> {
+                        handleError("Force Backup erstellen", Exception(result.error))
+                    }
+                }
+            } catch (e: Exception) {
+                handleError("Force Backup erstellen", e)
+            }
+        }
+    }
+
     private fun showErrorToast() {
         Toast.makeText(context, "Da lief etwas schief .. Prüfe den Log.", Toast.LENGTH_LONG).show()
     }
