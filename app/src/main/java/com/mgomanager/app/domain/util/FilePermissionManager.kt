@@ -46,7 +46,7 @@ class FilePermissionManager @Inject constructor(
         // Method 2: Try Android-specific stat format (some devices use different format)
         // The piped command filters the stat output to extract only the relevant lines.
         // If any part fails (stat, grep, or head), the entire command will fail and we
-        // fall back to Method 3 (ls -ld). This is intentional for robustness.
+        // fall back to the next method (Method 3: ls -ld). This is intentional for robustness.
         val statAndroidResult = rootUtil.executeCommand("stat \"$path\" | grep -E 'Uid:|Access:' | head -2")
         
         if (statAndroidResult.isSuccess) {
@@ -112,12 +112,13 @@ class FilePermissionManager @Inject constructor(
                 ?: return Result.failure(Exception("No Access line found"))
             
             // Extract permissions from format: "Access: (0755/drwxr-xr-x)"
-            // Remove leading zeros (e.g., "0755" -> "755", "0000" -> "0")
+            // Remove leading zeros (e.g., "0755" -> "755")
+            // Special case: if all digits are zeros (e.g., "0000"), keep "0"
             val permMatch = Regex("Access:\\s*\\((\\d+)/").find(accessLine)
             val rawPermissions = permMatch?.groupValues?.getOrNull(1)
                 ?: return Result.failure(Exception("Cannot parse permissions from: $accessLine"))
             
-            // Use dropWhile for clarity: remove leading zeros but keep at least one digit
+            // dropWhile removes leading zeros, ifEmpty handles the all-zeros case
             val permissions = rawPermissions.dropWhile { it == '0' }.ifEmpty { "0" }
 
             Result.success(FilePermissions(
