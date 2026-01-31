@@ -87,7 +87,7 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Backup configuration card
+            // Section 1: Allgemein (P6 spec)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -97,7 +97,7 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Backup-Konfiguration",
+                        text = "Allgemein",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -108,8 +108,17 @@ fun SettingsScreen(
                             prefixInput = it
                             viewModel.resetPrefixSaved()
                         },
-                        label = { Text("Accountname-Präfix") },
+                        label = { Text("Standard-Präfix") },
                         modifier = Modifier.fillMaxWidth(),
+                        isError = uiState.prefixError != null,
+                        supportingText = {
+                            uiState.prefixError?.let {
+                                Text(
+                                    text = it,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        },
                         trailingIcon = {
                             IconButton(onClick = { viewModel.updatePrefix(prefixInput) }) {
                                 Icon(
@@ -120,6 +129,34 @@ fun SettingsScreen(
                             }
                         }
                     )
+                }
+            }
+
+            // Section 2: Backup & Speicher (P6 spec)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Backup & Speicher",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "Aktueller Backup-Pfad:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+
+                    Text(
+                        text = uiState.backupRootPath,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
 
                     OutlinedTextField(
                         value = pathInput,
@@ -127,7 +164,7 @@ fun SettingsScreen(
                             pathInput = it
                             viewModel.resetPathSaved()
                         },
-                        label = { Text("Backup-Pfad") },
+                        label = { Text("Neuer Backup-Pfad") },
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             IconButton(onClick = { viewModel.updateBackupPath(pathInput) }) {
@@ -137,12 +174,19 @@ fun SettingsScreen(
                                     tint = if (uiState.pathSaved) StatusGreen else MaterialTheme.colorScheme.onSurface
                                 )
                             }
+                        },
+                        supportingText = {
+                            Text(
+                                text = "Bestehende Backups werden nicht verschoben.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
                         }
                     )
                 }
             }
 
-            // Import/Export card
+            // Section 3: Import / Export (P6 spec)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -152,48 +196,48 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Daten",
+                        text = "Import / Export",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Row(
+                    Button(
+                        onClick = { viewModel.exportData() },
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        enabled = !uiState.isExporting
                     ) {
-                        Button(
-                            onClick = { viewModel.exportData() },
-                            modifier = Modifier.weight(1f),
-                            enabled = !uiState.isExporting
-                        ) {
-                            if (uiState.isExporting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Text("Export")
-                            }
+                        if (uiState.isExporting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Exportiere...")
+                        } else {
+                            Text("Alle Backups exportieren")
                         }
-                        OutlinedButton(
-                            onClick = { viewModel.importData() },
-                            modifier = Modifier.weight(1f),
-                            enabled = !uiState.isImporting
-                        ) {
-                            if (uiState.isImporting) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Text("Import")
-                            }
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.showImportWarning() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !uiState.isImporting
+                    ) {
+                        if (uiState.isImporting) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Importiere...")
+                        } else {
+                            Text("Backups importieren")
                         }
                     }
                 }
             }
 
-            // SSH Server Sync card
+            // Section 4: SSH / Server (P6 spec)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -203,7 +247,7 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "SSH Server Sync",
+                        text = "SSH / Server",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -451,7 +495,7 @@ fun SettingsScreen(
                 }
             }
 
-            // About card
+            // About card (P6 spec)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp)
@@ -461,12 +505,43 @@ fun SettingsScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Über",
+                        text = "Über die App",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    Text("Version 1.0.0", style = MaterialTheme.typography.bodyMedium)
-                    Text("App-Starts: ${uiState.appStartCount}", style = MaterialTheme.typography.bodySmall)
+
+                    Text(
+                        text = "bGO Account Manager",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    Text(
+                        text = "Version 2.0.0",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+
+                    Text(
+                        text = "Build: 1",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "bGO Account Manager – lokales Backup-Tool für Monopoly GO Accounts.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "App-Starts: ${uiState.appStartCount}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
                 }
             }
 
@@ -522,6 +597,27 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = { viewModel.clearSshTestResult() }) {
                     Text("OK")
+                }
+            }
+        )
+    }
+
+    // Import warning dialog (P6 spec requirement)
+    if (uiState.showImportWarning) {
+        AlertDialog(
+            onDismissRequest = { viewModel.hideImportWarning() },
+            title = { Text("Backups importieren") },
+            text = {
+                Text("Beim Import können bestehende Backups überschrieben werden.")
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmImport() }) {
+                    Text("Importieren")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.hideImportWarning() }) {
+                    Text("Abbrechen")
                 }
             }
         )
