@@ -1,5 +1,8 @@
 package com.mgomanager.app.ui.screens.onboarding
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -36,6 +40,27 @@ fun OnboardingScreen(
     onComplete: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    // SAF folder picker launcher
+    val safPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.let {
+            // Take persistable permission for the selected folder
+            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(it, takeFlags)
+        }
+        viewModel.onSAFFolderSelected(uri)
+    }
+
+    // Launch SAF picker when requested
+    LaunchedEffect(uiState.showSAFPicker) {
+        if (uiState.showSAFPicker) {
+            safPickerLauncher.launch(null)
+        }
+    }
 
     // Navigate only when onboarding is marked as completed (via explicit user action)
     LaunchedEffect(uiState.onboardingMarkedComplete) {
