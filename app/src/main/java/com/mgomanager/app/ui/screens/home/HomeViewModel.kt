@@ -1,33 +1,73 @@
 package com.mgomanager.app.ui.screens.home
 
+import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.mgomanager.app.data.local.preferences.SettingsDataStore
 import com.mgomanager.app.data.model.Account
 import com.mgomanager.app.data.model.BackupResult
 import com.mgomanager.app.data.model.RestoreResult
 import com.mgomanager.app.data.repository.AccountRepository
+import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.BackupRepository
+import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.usecase.BackupRequest
+import com.mgomanager.app.domain.usecase.RestoreBackupUseCase
+import com.mgomanager.app.domain.util.RootUtil
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Sort options for account list
+ */
+enum class SortOption(val displayName: String) {
+    NAME("Name"),
+    LAST_PLAYED("Zuletzt gespielt"),
+    CREATED_AT("Erstellt am"),
+    USER_ID("User ID")
+}
+
+/**
+ * Sort direction
+ */
+enum class SortDirection {
+    ASC, DESC
+}
+
+/**
+ * UI State for Home/Accounts screen
+ */
 data class HomeUiState(
     val accounts: List<Account> = emptyList(),
+    val currentAccount: Account? = null,
+
+    // Search and Sort
+    val searchQuery: String = "",
+    val sortOption: SortOption = SortOption.LAST_PLAYED,
+    val sortDirection: SortDirection = SortDirection.DESC,
+
+    // Statistics
     val totalCount: Int = 0,
     val errorCount: Int = 0,
     val susCount: Int = 0,
+
+    // Loading and Error states
     val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+
+    // Dialog states
     val showBackupDialog: Boolean = false,
     val backupResult: BackupResult? = null,
     val restoreResult: RestoreResult? = null,
-    val showRestoreConfirm: Long? = null, // Account ID to restore
+    val showRestoreConfirm: Long? = null,
     val showRestoreSuccessDialog: Boolean = false,
-    val duplicateUserIdDialog: DuplicateUserIdInfo? = null, // For duplicate check
-    // Sorting
-    val sortMode: String = "lastPlayed",
+    val duplicateUserIdDialog: DuplicateUserIdInfo? = null,
+
+    // Prefix
     val accountPrefix: String = "MGO_"
 )
 
@@ -37,70 +77,141 @@ data class DuplicateUserIdInfo(
     val pendingRequest: BackupRequest
 )
 
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class HomeViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val accountRepository: AccountRepository,
     private val backupRepository: BackupRepository,
-    private val settingsDataStore: SettingsDataStore
+    private val appStateRepository: AppStateRepository,
+    private val logRepository: LogRepository,
+    private val restoreBackupUseCase: RestoreBackupUseCase,
+    private val rootUtil: RootUtil
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    private val _searchQuery = MutableStateFlow("")
+
     init {
-        loadAccounts()
+        loadInitialState()
+        observeAccounts()
         loadStatistics()
-        loadSortSettings()
+        observeSearchQuery()
     }
 
-    private fun loadAccounts() {
+    /**
+     * Load initial state from DataStore
+     */
+    private fun loadInitialState() {
+        viewModelScope.launch {
+            val savedQuery = appStateRepository.getLastSearchQuery() ?: ""
+            val savedSortOption = try {
+                SortOption.valueOf(appStateRepository.getSortOption())
+            } catch (e: Exception) {
+                SortOption.LAST_PLAYED
+            }
+            val savedSortDirection = try {
+                SortDirection.valueOf(appStateRepository.getSortDirection())
+            } catch (e: Exception) {
+                SortDirection.DESC
+            }
+            val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
+
+            _searchQuery.value = savedQuery
+            _uiState.update {
+                it.copy(
+                    searchQuery = savedQuery,
+                    sortOption = savedSortOption,
+                    sortDirection = savedSortDirection,
+                    accountPrefix = prefix
+                )
+            }
+        }
+    }
+
+    /**
+     * Observe accounts with search and sort applied
+     */
+    private fun observeAccounts() {
         viewModelScope.launch {
             combine(
                 accountRepository.getAllAccounts(),
-                settingsDataStore.sortMode,
-                settingsDataStore.accountPrefix
-            ) { accounts, sortMode, prefix ->
-                Triple(accounts, sortMode, prefix)
-            }.collect { (accounts, sortMode, prefix) ->
-                val sortedAccounts = sortAccounts(accounts, sortMode, prefix)
+                _searchQuery,
+                _uiState.map { Pair(it.sortOption, it.sortDirection) }.distinctUntilChanged()
+            ) { accounts, query, (sortOption, sortDirection) ->
+                Triple(accounts, query, Pair(sortOption, sortDirection))
+            }.collect { (accounts, query, sortPair) ->
+                val filtered = filterAccounts(accounts, query)
+                val sorted = sortAccounts(filtered, sortPair.first, sortPair.second)
+                val currentAccount = findCurrentAccount(accounts)
+
                 _uiState.update {
                     it.copy(
-                        accounts = sortedAccounts,
-                        sortMode = sortMode,
-                        accountPrefix = prefix
+                        accounts = sorted,
+                        currentAccount = currentAccount,
+                        searchQuery = query
                     )
                 }
             }
         }
     }
 
-    private fun loadSortSettings() {
+    /**
+     * Observe search query changes and persist with debounce
+     */
+    private fun observeSearchQuery() {
         viewModelScope.launch {
-            settingsDataStore.sortMode.collect { mode ->
-                _uiState.update { it.copy(sortMode = mode) }
-            }
+            _searchQuery
+                .debounce(300)
+                .collect { query ->
+                    appStateRepository.setLastSearchQuery(query)
+                }
         }
     }
 
-    private fun sortAccounts(accounts: List<Account>, sortMode: String, prefix: String): List<Account> {
-        return when (sortMode) {
-            "name" -> accounts.sortedBy { it.fullName.lowercase() }
-            "created" -> accounts.sortedByDescending { it.createdAt }
-            "lastPlayed" -> accounts.sortedByDescending { it.lastPlayedAt }
-            "prefixFirst" -> accounts.sortedWith(compareBy(
-                { if (prefix.isNotBlank()) !it.fullName.startsWith(prefix) else false },
-                { it.fullName.lowercase() }
-            ))
-            else -> accounts.sortedByDescending { it.lastPlayedAt }
+    /**
+     * Filter accounts by search query
+     */
+    private fun filterAccounts(accounts: List<Account>, query: String): List<Account> {
+        if (query.isBlank()) return accounts
+        val lowerQuery = query.lowercase()
+        return accounts.filter { account ->
+            account.accountName.lowercase().contains(lowerQuery) ||
+                    account.userId.lowercase().contains(lowerQuery)
         }
     }
 
-    fun setSortMode(mode: String) {
-        viewModelScope.launch {
-            settingsDataStore.setSortMode(mode)
+    /**
+     * Sort accounts based on sort option and direction
+     */
+    private fun sortAccounts(
+        accounts: List<Account>,
+        sortOption: SortOption,
+        sortDirection: SortDirection
+    ): List<Account> {
+        val sorted = when (sortOption) {
+            SortOption.NAME -> accounts.sortedBy { it.accountName.lowercase() }
+            SortOption.LAST_PLAYED -> accounts.sortedBy { it.lastPlayedAt }
+            SortOption.CREATED_AT -> accounts.sortedBy { it.createdAt }
+            SortOption.USER_ID -> accounts.sortedBy { it.userId }
         }
+        return if (sortDirection == SortDirection.DESC) sorted.reversed() else sorted
     }
 
+    /**
+     * Find the current account (newest lastPlayedAt > 0)
+     */
+    private fun findCurrentAccount(accounts: List<Account>): Account? {
+        return accounts
+            .filter { it.lastPlayedAt > 0 }
+            .maxByOrNull { it.lastPlayedAt }
+    }
+
+    /**
+     * Load statistics from repository
+     */
     private fun loadStatistics() {
         viewModelScope.launch {
             combine(
@@ -120,6 +231,107 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
+
+    // ============================================================
+    // Search & Sort Actions
+    // ============================================================
+
+    fun onSearchQueryChange(query: String) {
+        _searchQuery.value = query
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    fun onSortOptionChange(option: SortOption) {
+        viewModelScope.launch {
+            appStateRepository.setSortOption(option.name)
+            _uiState.update { it.copy(sortOption = option) }
+        }
+    }
+
+    fun toggleSortDirection() {
+        viewModelScope.launch {
+            val newDirection = if (_uiState.value.sortDirection == SortDirection.ASC) {
+                SortDirection.DESC
+            } else {
+                SortDirection.ASC
+            }
+            appStateRepository.setSortDirection(newDirection.name)
+            _uiState.update { it.copy(sortDirection = newDirection) }
+        }
+    }
+
+    // ============================================================
+    // Launch Monopoly Go with Account State (C2)
+    // ============================================================
+
+    /**
+     * Launch Monopoly GO with the specified account's state
+     * 1. Set SSAID
+     * 2. Copy account data to /data/data/com.scopely.monopolygo/
+     * 3. Start Monopoly GO
+     */
+    fun launchMonopolyGoWithAccountState(accountId: Long) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true) }
+
+            try {
+                // 1. Load account from DB
+                val account = accountRepository.getAccountById(accountId)
+                if (account == null) {
+                    showErrorToast("Account nicht gefunden")
+                    logRepository.logError("LAUNCH_MGO", "Account mit ID $accountId nicht gefunden")
+                    _uiState.update { it.copy(isLoading = false) }
+                    return@launch
+                }
+
+                logRepository.logInfo("LAUNCH_MGO", "Starte Monopoly GO mit Account: ${account.accountName}")
+
+                // 2. Use RestoreBackupUseCase to set SSAID and copy data
+                val restoreResult = restoreBackupUseCase.execute(accountId)
+
+                when (restoreResult) {
+                    is RestoreResult.Success -> {
+                        // 3. Start Monopoly GO
+                        val launchResult = rootUtil.executeCommand(
+                            "am start -n com.scopely.monopolygo/.MainActivity"
+                        )
+
+                        if (launchResult.isSuccess) {
+                            // Update lastPlayedAt
+                            accountRepository.updateLastPlayedTimestamp(accountId)
+                            logRepository.logInfo("LAUNCH_MGO", "Monopoly GO erfolgreich gestartet")
+                        } else {
+                            showErrorToast("Da lief etwas schief .. Prüfe den Log.")
+                            logRepository.logError(
+                                "LAUNCH_MGO",
+                                "Fehler beim Starten von Monopoly GO: ${launchResult.exceptionOrNull()?.message}"
+                            )
+                        }
+                    }
+
+                    is RestoreResult.Failure -> {
+                        showErrorToast("Da lief etwas schief .. Prüfe den Log.")
+                        logRepository.logError("LAUNCH_MGO", "Restore fehlgeschlagen: ${restoreResult.error}")
+                    }
+                }
+
+                _uiState.update { it.copy(isLoading = false) }
+
+            } catch (e: Exception) {
+                showErrorToast("Da lief etwas schief .. Prüfe den Log.")
+                logRepository.logError("LAUNCH_MGO", "Unerwarteter Fehler", exception = e)
+                _uiState.update { it.copy(isLoading = false) }
+            }
+        }
+    }
+
+    private fun showErrorToast(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+
+    // ============================================================
+    // Backup Dialog Actions
+    // ============================================================
 
     fun showBackupDialog() {
         _uiState.update { it.copy(showBackupDialog = true) }
@@ -141,8 +353,8 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            val prefix = settingsDataStore.accountPrefix.first()
-            val backupPath = settingsDataStore.backupRootPath.first()
+            val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
+            val backupPath = appStateRepository.getBackupDirectory() ?: "/storage/emulated/0/bgo_backups/"
 
             val request = BackupRequest(
                 accountName = accountName,
@@ -157,7 +369,6 @@ class HomeViewModel @Inject constructor(
 
             val result = backupRepository.createBackup(request, forceDuplicate)
 
-            // Check if duplicate user ID was found
             if (result is BackupResult.DuplicateUserId) {
                 _uiState.update {
                     it.copy(
@@ -204,6 +415,10 @@ class HomeViewModel @Inject constructor(
         _uiState.update { it.copy(backupResult = null) }
     }
 
+    // ============================================================
+    // Restore Actions
+    // ============================================================
+
     fun showRestoreConfirm(accountId: Long) {
         _uiState.update { it.copy(showRestoreConfirm = accountId) }
     }
@@ -234,5 +449,9 @@ class HomeViewModel @Inject constructor(
 
     fun hideRestoreSuccessDialog() {
         _uiState.update { it.copy(showRestoreSuccessDialog = false) }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(errorMessage = null) }
     }
 }
