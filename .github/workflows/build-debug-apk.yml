@@ -1,15 +1,10 @@
 name: Build Debug APK
 
 on:
-  # Trigger on push to main branches
-  push:
-    branches:
-      - main
-      - master
-      - develop
-  
-  # Trigger on pull requests
+  # Trigger when PR is merged (closed with merge)
   pull_request:
+    types:
+      - closed
     branches:
       - main
       - master
@@ -22,6 +17,8 @@ jobs:
   build:
     name: Build Debug APK
     runs-on: ubuntu-latest
+    # Only run if manually triggered OR if PR was merged (not just closed)
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     
     permissions:
       contents: read

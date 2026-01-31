@@ -1104,7 +1104,7 @@ fun CreateProgressStep(
     ) {
         CircularProgressIndicator(
             modifier = Modifier.size(64.dp),
-            progress = { progressPercent }
+            progress = progressPercent
         )
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -1118,7 +1118,7 @@ fun CreateProgressStep(
         Spacer(modifier = Modifier.height(16.dp))
 
         LinearProgressIndicator(
-            progress = { progressPercent },
+            progress = progressPercent,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 32.dp),
