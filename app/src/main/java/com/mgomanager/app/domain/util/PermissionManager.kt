@@ -8,69 +8,168 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
-import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.mgomanager.app.data.repository.LogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Permission status for storage access
+ */
+enum class StoragePermissionStatus {
+    GRANTED,
+    DENIED,
+    SHOULD_SHOW_RATIONALE,
+    REQUIRES_SETTINGS,
+    REQUIRES_SAF
+}
+
+/**
+ * Result of permission request
+ */
+sealed class PermissionResult {
+    object Granted : PermissionResult()
+    object Denied : PermissionResult()
+    data class NeedsRationale(val permissions: List<String>) : PermissionResult()
+    object NeedsSettings : PermissionResult()
+    object NeedsSAF : PermissionResult()
+}
+
 @Singleton
 class PermissionManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val logRepository: LogRepository
 ) {
+
+    companion object {
+        // Permissions for Android 9-10
+        val LEGACY_STORAGE_PERMISSIONS = arrayOf(
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        )
+
+        // Permissions for Android 13+
+        val MEDIA_PERMISSIONS = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO
+            )
+        } else {
+            emptyArray()
+        }
+    }
 
     /**
      * Check if all necessary storage permissions are granted
      */
     fun hasStoragePermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+
-            Environment.isExternalStorageManager()
-        } else {
-            // Android 9-10
-            val readPermission = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
+        val hasPermission = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                // Android 11+ - Check MANAGE_EXTERNAL_STORAGE
+                Environment.isExternalStorageManager()
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                // Android 13+ - Check media permissions
+                MEDIA_PERMISSIONS.all { permission ->
+                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+                }
+            }
+            else -> {
+                // Android 9-10 - Check READ/WRITE
+                LEGACY_STORAGE_PERMISSIONS.all { permission ->
+                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+                }
+            }
+        }
 
-            val writePermission = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
+        logRepository.logInfo("PERMISSION", "Storage permissions check: $hasPermission (SDK ${Build.VERSION.SDK_INT})")
+        return hasPermission
+    }
 
-            readPermission && writePermission
+    /**
+     * Get the current permission status with more detail
+     */
+    fun getStoragePermissionStatus(): StoragePermissionStatus {
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                if (Environment.isExternalStorageManager()) {
+                    StoragePermissionStatus.GRANTED
+                } else {
+                    // Android 11+ recommends SAF over MANAGE_EXTERNAL_STORAGE
+                    StoragePermissionStatus.REQUIRES_SAF
+                }
+            }
+            else -> {
+                val allGranted = LEGACY_STORAGE_PERMISSIONS.all { permission ->
+                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+                }
+                if (allGranted) {
+                    StoragePermissionStatus.GRANTED
+                } else {
+                    StoragePermissionStatus.DENIED
+                }
+            }
         }
     }
 
     /**
-     * Request storage permissions (must be called from Activity)
+     * Get permissions to request based on Android version
      */
-    fun requestStoragePermissions(activity: ComponentActivity) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // Android 11+ - Request MANAGE_EXTERNAL_STORAGE
-            try {
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                intent.data = Uri.parse("package:${context.packageName}")
-                activity.startActivity(intent)
-            } catch (e: Exception) {
-                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                activity.startActivity(intent)
-            }
-        } else {
-            // Android 9-10 - Request READ/WRITE permissions
-            val requestPermissionLauncher = activity.registerForActivityResult(
-                ActivityResultContracts.RequestMultiplePermissions()
-            ) { permissions ->
-                // Handle permission result
-            }
+    fun getRequiredPermissions(): Array<String> {
+        return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> MEDIA_PERMISSIONS
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.R -> LEGACY_STORAGE_PERMISSIONS
+            else -> emptyArray() // Android 11-12 use SAF or MANAGE_EXTERNAL_STORAGE
+        }
+    }
 
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.READ_EXTERNAL_STORAGE,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                )
-            )
+    /**
+     * Check if we should use SAF (Storage Access Framework) instead of direct permissions
+     * Recommended for Android 11+
+     */
+    fun shouldUseSAF(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+    }
+
+    /**
+     * Get intent for MANAGE_EXTERNAL_STORAGE settings (fallback for Android 11+)
+     */
+    fun getManageStorageIntent(): Intent {
+        logRepository.logInfo("PERMISSION", "Opening MANAGE_EXTERNAL_STORAGE settings")
+        return try {
+            Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:${context.packageName}")
+            }
+        } catch (e: Exception) {
+            logRepository.logWarning("PERMISSION", "Fallback to general storage settings")
+            Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        }
+    }
+
+    /**
+     * Log permission request result
+     */
+    fun logPermissionResult(permissions: Map<String, Boolean>) {
+        val granted = permissions.filter { it.value }.keys
+        val denied = permissions.filter { !it.value }.keys
+
+        if (granted.isNotEmpty()) {
+            logRepository.logInfo("PERMISSION", "Permissions granted: ${granted.joinToString()}")
+        }
+        if (denied.isNotEmpty()) {
+            logRepository.logWarning("PERMISSION", "Permissions denied: ${denied.joinToString()}")
+        }
+    }
+
+    /**
+     * Log SAF folder selection result
+     */
+    fun logSAFResult(uri: Uri?) {
+        if (uri != null) {
+            logRepository.logInfo("PERMISSION", "SAF folder selected: $uri")
+        } else {
+            logRepository.logWarning("PERMISSION", "SAF folder selection cancelled")
         }
     }
 }

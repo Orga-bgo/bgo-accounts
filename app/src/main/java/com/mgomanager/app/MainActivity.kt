@@ -11,7 +11,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.mgomanager.app.data.repository.AppStateRepository
-import com.mgomanager.app.ui.navigation.AppNavGraph
+import com.mgomanager.app.ui.navigation.MainScreen
 import com.mgomanager.app.ui.screens.onboarding.OnboardingScreen
 import com.mgomanager.app.ui.screens.splash.SplashScreen
 import com.mgomanager.app.ui.screens.systemcheck.SystemCheckScreen
@@ -91,11 +91,9 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // Main App (Home and nested navigation)
+                            // Main App with Bottom Navigation
                             composable(AppRoute.Home.route) {
-                                // Create a nested NavHost for the main app
-                                val mainNavController = rememberNavController()
-                                AppNavGraph(mainNavController)
+                                MainScreen()
                             }
                         }
                     } ?: run {

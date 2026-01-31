@@ -2,13 +2,16 @@ package com.mgomanager.app.ui.screens.onboarding
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.util.FileUtil
 import com.mgomanager.app.domain.util.ImportUtil
+import com.mgomanager.app.domain.util.PermissionManager
 import com.mgomanager.app.domain.util.RootUtil
+import com.mgomanager.app.domain.util.StoragePermissionStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -47,13 +50,19 @@ data class OnboardingUiState(
     val sshUsername: String = "",
     val sshPassword: String = "",
     val backupDirectory: String = "/storage/emulated/0/bgo_backups/",
+    val backupDirectoryUri: Uri? = null,  // For SAF (Android 11+)
     val rootAccessGranted: Boolean = false,
     val dataDataPermissionsChecked: Boolean = false,
     val monopolyGoInstalled: Boolean = false,
     val monopolyGoUid: Int? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
-    val importResult: String? = null
+    val importResult: String? = null,
+    // Permission state
+    val storagePermissionGranted: Boolean = false,
+    val showPermissionRationale: Boolean = false,
+    val requiresSAF: Boolean = false,
+    val showSAFPicker: Boolean = false
 )
 
 @HiltViewModel
@@ -63,7 +72,8 @@ class OnboardingViewModel @Inject constructor(
     private val rootUtil: RootUtil,
     private val fileUtil: FileUtil,
     private val importUtil: ImportUtil,
-    private val logRepository: LogRepository
+    private val logRepository: LogRepository,
+    private val permissionManager: PermissionManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -227,26 +237,190 @@ class OnboardingViewModel @Inject constructor(
         _uiState.update { it.copy(backupDirectory = directory) }
     }
 
+    /**
+     * Check storage permissions before creating backup directory
+     */
+    fun checkStoragePermissions() {
+        viewModelScope.launch {
+            val status = permissionManager.getStoragePermissionStatus()
+            logRepository.logInfo("ONBOARDING", "Storage permission status: $status")
+
+            when (status) {
+                StoragePermissionStatus.GRANTED -> {
+                    _uiState.update {
+                        it.copy(
+                            storagePermissionGranted = true,
+                            requiresSAF = false,
+                            showPermissionRationale = false
+                        )
+                    }
+                }
+                StoragePermissionStatus.REQUIRES_SAF -> {
+                    _uiState.update {
+                        it.copy(
+                            storagePermissionGranted = false,
+                            requiresSAF = true,
+                            showPermissionRationale = false
+                        )
+                    }
+                }
+                StoragePermissionStatus.DENIED,
+                StoragePermissionStatus.SHOULD_SHOW_RATIONALE -> {
+                    _uiState.update {
+                        it.copy(
+                            storagePermissionGranted = false,
+                            requiresSAF = false,
+                            showPermissionRationale = true
+                        )
+                    }
+                }
+                StoragePermissionStatus.REQUIRES_SETTINGS -> {
+                    _uiState.update {
+                        it.copy(
+                            storagePermissionGranted = false,
+                            requiresSAF = false,
+                            error = "Bitte erteile die Speicherberechtigung in den Einstellungen"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Get required permissions for runtime request
+     */
+    fun getRequiredPermissions(): Array<String> {
+        return permissionManager.getRequiredPermissions()
+    }
+
+    /**
+     * Check if SAF should be used
+     */
+    fun shouldUseSAF(): Boolean {
+        return permissionManager.shouldUseSAF()
+    }
+
+    /**
+     * Handle permission result from Activity
+     */
+    fun onPermissionResult(permissions: Map<String, Boolean>) {
+        permissionManager.logPermissionResult(permissions)
+
+        val allGranted = permissions.values.all { it }
+        _uiState.update {
+            it.copy(
+                storagePermissionGranted = allGranted,
+                showPermissionRationale = false,
+                error = if (!allGranted) "Speicherberechtigung wurde verweigert. Bitte erteile die Berechtigung um fortzufahren." else null
+            )
+        }
+
+        if (allGranted) {
+            logRepository.logInfo("ONBOARDING", "Speicherberechtigungen erteilt")
+        } else {
+            logRepository.logWarning("ONBOARDING", "Speicherberechtigungen verweigert")
+        }
+    }
+
+    /**
+     * Dismiss permission rationale dialog
+     */
+    fun dismissPermissionRationale() {
+        _uiState.update { it.copy(showPermissionRationale = false) }
+    }
+
+    /**
+     * Request to show SAF folder picker
+     */
+    fun requestSAFPicker() {
+        _uiState.update { it.copy(showSAFPicker = true) }
+        logRepository.logInfo("ONBOARDING", "SAF-Ordnerauswahl angefordert")
+    }
+
+    /**
+     * Handle SAF folder selection result
+     */
+    fun onSAFFolderSelected(uri: Uri?) {
+        permissionManager.logSAFResult(uri)
+
+        _uiState.update { it.copy(showSAFPicker = false) }
+
+        if (uri != null) {
+            // Take persistable permission
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                logRepository.logWarning("ONBOARDING", "Konnte keine persistenten URI-Berechtigungen erhalten: ${e.message}")
+            }
+
+            _uiState.update {
+                it.copy(
+                    backupDirectoryUri = uri,
+                    backupDirectory = uri.toString(),
+                    storagePermissionGranted = true,
+                    error = null
+                )
+            }
+            logRepository.logInfo("ONBOARDING", "SAF-Ordner ausgewählt: $uri")
+        } else {
+            _uiState.update {
+                it.copy(
+                    error = "Kein Ordner ausgewählt. Bitte wähle einen Backup-Ordner."
+                )
+            }
+        }
+    }
+
     fun saveBackupDirectoryAndContinue() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            // Create directory if it doesn't exist
-            val result = fileUtil.createDirectory(_uiState.value.backupDirectory)
+            // For SAF (Android 11+), we already have the URI
+            val usingSAF = _uiState.value.backupDirectoryUri != null
 
-            if (result.isSuccess) {
-                appStateRepository.setBackupDirectory(_uiState.value.backupDirectory)
-                logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis gespeichert: ${_uiState.value.backupDirectory}")
+            if (usingSAF) {
+                // Save SAF URI
+                val uri = _uiState.value.backupDirectoryUri!!
+                appStateRepository.setBackupDirectoryUri(uri.toString())
+                appStateRepository.setBackupDirectory(uri.toString())
+                logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
                 _uiState.update { it.copy(isLoading = false, error = null) }
                 nextStep()
             } else {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Fehler beim Erstellen des Ordners: ${result.exceptionOrNull()?.message}"
-                    )
+                // Check permissions first (for legacy storage)
+                if (!permissionManager.hasStoragePermissions()) {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Speicherberechtigung erforderlich. Bitte erteile die Berechtigung."
+                        )
+                    }
+                    logRepository.logError("ONBOARDING", "Versuch Backup-Ordner zu erstellen ohne Berechtigung")
+                    return@launch
                 }
-                logRepository.logError("ONBOARDING", "Fehler beim Erstellen des Backup-Ordners", exception = result.exceptionOrNull() as? Exception)
+
+                // Create directory if it doesn't exist
+                val result = fileUtil.createDirectory(_uiState.value.backupDirectory)
+
+                if (result.isSuccess) {
+                    appStateRepository.setBackupDirectory(_uiState.value.backupDirectory)
+                    logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis gespeichert: ${_uiState.value.backupDirectory}")
+                    _uiState.update { it.copy(isLoading = false, error = null) }
+                    nextStep()
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Fehler beim Erstellen des Ordners: ${result.exceptionOrNull()?.message}"
+                        )
+                    }
+                    logRepository.logError("ONBOARDING", "Fehler beim Erstellen des Backup-Ordners", exception = result.exceptionOrNull() as? Exception)
+                }
             }
         }
     }
