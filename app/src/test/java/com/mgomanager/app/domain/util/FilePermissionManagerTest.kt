@@ -154,10 +154,10 @@ class FilePermissionManagerTest {
     }
 
     @Test
-    fun `getFilePermissions should handle zero permissions correctly`() = runTest {
+    fun `test zero permissions are normalized correctly`() = runTest {
         // Given
         val path = "/data/data/com.scopely.monopolygo/files/test"
-        // Edge case: 0000 permissions should become "0"
+        // Test case: zero permissions (0000) should be normalized to "0"
         val statOutput = """
             Uid: (10123/u0_a123)   Gid: (10456/u0_a456)
             Access: (0000/----------)
