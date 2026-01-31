@@ -1,0 +1,53 @@
+name: Build Debug APK
+
+on:
+  # Trigger on push to main branches
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  
+  # Trigger on pull requests
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+      
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+      
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
