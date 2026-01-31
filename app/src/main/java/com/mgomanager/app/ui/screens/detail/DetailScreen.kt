@@ -22,6 +22,36 @@ import androidx.navigation.NavController
 import com.mgomanager.app.data.model.SusLevel
 import com.mgomanager.app.ui.theme.StatusRed
 
+/**
+ * Copyable field component - click to copy value to clipboard
+ * Per P5 spec: "Jeder Eintrag (Key-Value-Zeile) ist klickbar. Klick kopiert den Value in die Zwischenablage."
+ */
+@Composable
+private fun CopyableField(
+    label: String,
+    value: String,
+    onCopy: (String, String) -> Unit,
+    isMonospace: Boolean = false
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCopy(label, value) }
+            .padding(vertical = 4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = if (isMonospace) FontFamily.Monospace else FontFamily.Default
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(
@@ -60,11 +90,12 @@ fun DetailScreen(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // User ID
+                    // User ID (clickable to copy)
                     Text(
                         text = "MoGo User ID: ${account.userId}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier.clickable { viewModel.copyToClipboard("User ID", account.userId) }
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -143,27 +174,18 @@ fun DetailScreen(
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
-                        Text(
-                            text = "FREUNDSCHAFTSLINK",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = "Nicht verfügbar",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
+                        CopyableField(
+                            label = "FREUNDSCHAFTSLINK",
+                            value = "Nicht verfügbar",
+                            onCopy = viewModel::copyToClipboard
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "FREUNDSCHAFTSCODE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = "---",
-                            style = MaterialTheme.typography.bodyMedium
+                        CopyableField(
+                            label = "FREUNDSCHAFTSCODE",
+                            value = "---",
+                            onCopy = viewModel::copyToClipboard
                         )
                     }
                 }
@@ -221,54 +243,38 @@ fun DetailScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        Text(
-                            text = "SSAID",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = if (account.ssaid == "nicht vorhanden") "Nicht verfügbar" else account.ssaid,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "SSAID",
+                            value = if (account.ssaid == "nicht vorhanden") "Nicht verfügbar" else account.ssaid,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "GAID",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = if (account.gaid == "nicht vorhanden") "Nicht verfügbar" else account.gaid,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "GAID",
+                            value = if (account.gaid == "nicht vorhanden") "Nicht verfügbar" else account.gaid,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "DEVICE ID",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = if (account.deviceToken == "nicht vorhanden") "Nicht verfügbar" else account.deviceToken,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "DEVICE ID",
+                            value = if (account.deviceToken == "nicht vorhanden") "Nicht verfügbar" else account.deviceToken,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "APP SET ID",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = if (account.appSetId == "nicht vorhanden") "Nicht verfügbar" else account.appSetId,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "APP SET ID",
+                            value = if (account.appSetId == "nicht vorhanden") "Nicht verfügbar" else account.appSetId,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
                     }
                 }
@@ -290,50 +296,34 @@ fun DetailScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            Text(
-                                text = "USERNAME",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                text = account.fbUsername ?: "---",
-                                style = MaterialTheme.typography.bodyMedium
+                            CopyableField(
+                                label = "USERNAME",
+                                value = account.fbUsername ?: "---",
+                                onCopy = viewModel::copyToClipboard
                             )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = "PASSWORT",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                text = account.fbPassword ?: "---",
-                                style = MaterialTheme.typography.bodyMedium
+                            CopyableField(
+                                label = "PASSWORT",
+                                value = account.fbPassword ?: "---",
+                                onCopy = viewModel::copyToClipboard
                             )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = "2FA CODE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                text = account.fb2FA ?: "---",
-                                style = MaterialTheme.typography.bodyMedium
+                            CopyableField(
+                                label = "2FA CODE",
+                                value = account.fb2FA ?: "---",
+                                onCopy = viewModel::copyToClipboard
                             )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = "TEMP-MAIL",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            Text(
-                                text = account.fbTempMail ?: "---",
-                                style = MaterialTheme.typography.bodyMedium
+                            CopyableField(
+                                label = "TEMP-MAIL",
+                                value = account.fbTempMail ?: "---",
+                                onCopy = viewModel::copyToClipboard
                             )
                         }
                     }
@@ -355,53 +345,37 @@ fun DetailScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        Text(
-                            text = "ERSTELLT AM",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = account.getFormattedCreatedAt(),
-                            style = MaterialTheme.typography.bodyMedium
+                        CopyableField(
+                            label = "ERSTELLT AM",
+                            value = account.getFormattedCreatedAt(),
+                            onCopy = viewModel::copyToClipboard
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "BACKUP-PFAD",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = account.backupPath,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "BACKUP-PFAD",
+                            value = account.backupPath,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "DATEI-EIGENTÜMER",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = "${account.fileOwner}:${account.fileGroup}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "DATEI-EIGENTÜMER",
+                            value = "${account.fileOwner}:${account.fileGroup}",
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Text(
-                            text = "BERECHTIGUNGEN",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = account.filePermissions,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontFamily = FontFamily.Monospace
+                        CopyableField(
+                            label = "BERECHTIGUNGEN",
+                            value = account.filePermissions,
+                            onCopy = viewModel::copyToClipboard,
+                            isMonospace = true
                         )
                     }
                 }
@@ -444,33 +418,50 @@ fun DetailScreen(
     if (uiState.showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.hideDeleteDialog() },
-            title = { Text("Löschen") },
-            text = { Text("Account '${uiState.account?.fullName}' wirklich löschen?") },
+            title = { Text("Account löschen") },
+            text = {
+                Column {
+                    Text("Account '${uiState.account?.fullName}' wirklich löschen?")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Dieser Account und alle zugehörigen Backups werden dauerhaft gelöscht.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteAccount { navController.popBackStack() }
                 }) {
-                    Text("Ja")
+                    Text("Löschen", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.hideDeleteDialog() }) {
-                    Text("Nein")
+                    Text("Abbrechen")
                 }
             }
         )
     }
 
-    // Edit dialog
+    // Edit dialog - allows editing all fields per P5 spec (only affects DB, no side effects)
     if (uiState.showEditDialog) {
         uiState.account?.let { account ->
             var editName by remember { mutableStateOf(account.accountName) }
+            var editUserId by remember { mutableStateOf(account.userId) }
+            var editSsaid by remember { mutableStateOf(account.ssaid) }
+            var editGaid by remember { mutableStateOf(account.gaid) }
+            var editDeviceToken by remember { mutableStateOf(account.deviceToken) }
+            var editAppSetId by remember { mutableStateOf(account.appSetId) }
             var editSusLevel by remember { mutableStateOf(account.susLevel) }
             var editHasError by remember { mutableStateOf(account.hasError) }
+            var editHasFacebookLink by remember { mutableStateOf(account.hasFacebookLink) }
             var editFbUsername by remember { mutableStateOf(account.fbUsername ?: "") }
             var editFbPassword by remember { mutableStateOf(account.fbPassword ?: "") }
             var editFb2FA by remember { mutableStateOf(account.fb2FA ?: "") }
             var editFbTempMail by remember { mutableStateOf(account.fbTempMail ?: "") }
+            var editBackupPath by remember { mutableStateOf(account.backupPath) }
             var susDropdownExpanded by remember { mutableStateOf(false) }
 
             AlertDialog(
@@ -478,9 +469,14 @@ fun DetailScreen(
                 title = { Text("Account bearbeiten") },
                 text = {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Basic info section
+                        Text("Allgemein", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
                         OutlinedTextField(
                             value = editName,
                             onValueChange = { editName = it },
@@ -507,7 +503,7 @@ fun DetailScreen(
                                 expanded = susDropdownExpanded,
                                 onDismissRequest = { susDropdownExpanded = false }
                             ) {
-                                SusLevel.values().forEach { level ->
+                                SusLevel.entries.forEach { level ->
                                     DropdownMenuItem(
                                         text = { Text(level.displayName) },
                                         onClick = {
@@ -530,10 +526,60 @@ fun DetailScreen(
                             Text("Hat Error")
                         }
 
-                        if (account.hasFacebookLink) {
-                            Divider()
-                            Text("Facebook", style = MaterialTheme.typography.labelMedium)
+                        HorizontalDivider()
 
+                        // Device IDs section
+                        Text("Geräte-IDs", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                        OutlinedTextField(
+                            value = editUserId,
+                            onValueChange = { editUserId = it },
+                            label = { Text("User ID") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = editSsaid,
+                            onValueChange = { editSsaid = it },
+                            label = { Text("SSAID") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = editGaid,
+                            onValueChange = { editGaid = it },
+                            label = { Text("GAID") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = editDeviceToken,
+                            onValueChange = { editDeviceToken = it },
+                            label = { Text("Device Token") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = editAppSetId,
+                            onValueChange = { editAppSetId = it },
+                            label = { Text("App Set ID") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        HorizontalDivider()
+
+                        // Facebook section
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = editHasFacebookLink,
+                                onCheckedChange = { editHasFacebookLink = it }
+                            )
+                            Text("Facebook-Verbindung")
+                        }
+
+                        if (editHasFacebookLink) {
                             OutlinedTextField(
                                 value = editFbUsername,
                                 onValueChange = { editFbUsername = it },
@@ -559,18 +605,37 @@ fun DetailScreen(
                                 modifier = Modifier.fillMaxWidth()
                             )
                         }
+
+                        HorizontalDivider()
+
+                        // Backup section
+                        Text("Backup", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+
+                        OutlinedTextField(
+                            value = editBackupPath,
+                            onValueChange = { editBackupPath = it },
+                            label = { Text("Backup-Pfad") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        viewModel.updateAccount(
+                        viewModel.updateAccountFull(
                             name = editName,
+                            userId = editUserId,
+                            ssaid = editSsaid,
+                            gaid = editGaid,
+                            deviceToken = editDeviceToken,
+                            appSetId = editAppSetId,
                             susLevel = editSusLevel,
                             hasError = editHasError,
-                            fbUsername = if (account.hasFacebookLink) editFbUsername.ifBlank { null } else null,
-                            fbPassword = if (account.hasFacebookLink) editFbPassword.ifBlank { null } else null,
-                            fb2FA = if (account.hasFacebookLink) editFb2FA.ifBlank { null } else null,
-                            fbTempMail = if (account.hasFacebookLink) editFbTempMail.ifBlank { null } else null
+                            hasFacebookLink = editHasFacebookLink,
+                            fbUsername = if (editHasFacebookLink) editFbUsername.ifBlank { null } else null,
+                            fbPassword = if (editHasFacebookLink) editFbPassword.ifBlank { null } else null,
+                            fb2FA = if (editHasFacebookLink) editFb2FA.ifBlank { null } else null,
+                            fbTempMail = if (editHasFacebookLink) editFbTempMail.ifBlank { null } else null,
+                            backupPath = editBackupPath
                         )
                     }) {
                         Text("Speichern")
