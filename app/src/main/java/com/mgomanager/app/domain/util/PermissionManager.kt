@@ -71,15 +71,15 @@ class PermissionManager @Inject constructor(
      */
     fun hasStoragePermissions(): Boolean {
         val hasPermission = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                // Android 11+ - Check MANAGE_EXTERNAL_STORAGE
-                Environment.isExternalStorageManager()
-            }
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
                 // Android 13+ - Check media permissions
                 MEDIA_PERMISSIONS.all { permission ->
                     ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
                 }
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+                // Android 11+ - Check MANAGE_EXTERNAL_STORAGE
+                Environment.isExternalStorageManager()
             }
             else -> {
                 // Android 9-10 - Check READ/WRITE
@@ -100,6 +100,16 @@ class PermissionManager @Inject constructor(
      */
     fun getStoragePermissionStatus(): StoragePermissionStatus {
         return when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                val allGranted = MEDIA_PERMISSIONS.all { permission ->
+                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+                }
+                if (allGranted) {
+                    StoragePermissionStatus.GRANTED
+                } else {
+                    StoragePermissionStatus.DENIED
+                }
+            }
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
                 if (Environment.isExternalStorageManager()) {
                     StoragePermissionStatus.GRANTED
