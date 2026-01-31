@@ -107,6 +107,10 @@ class RootUtil @Inject constructor() {
      * Execute a single root command (assumes root is already verified)
      */
     suspend fun executeCommand(command: String): Result<String> = withContext(Dispatchers.IO) {
+        if (!ensureRootReady()) {
+            return@withContext Result.failure(Exception("Root-Zugriff nicht verfügbar"))
+        }
+
         executeCommandInternal(command)
     }
 
@@ -137,9 +141,8 @@ class RootUtil @Inject constructor() {
     suspend fun executeCommands(commands: List<String>): Result<List<String>> =
         withContext(Dispatchers.IO) {
             try {
-                val shell = Shell.getShell()
-                if (!shell.isRoot) {
-                    return@withContext Result.failure(Exception("No root access"))
+                if (!ensureRootReady()) {
+                    return@withContext Result.failure(Exception("Root-Zugriff nicht verfügbar"))
                 }
 
                 val result = Shell.su(*commands.toTypedArray()).exec()
