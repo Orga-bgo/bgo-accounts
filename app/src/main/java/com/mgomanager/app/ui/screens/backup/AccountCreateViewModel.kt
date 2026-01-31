@@ -157,6 +157,21 @@ class AccountCreateViewModel @Inject constructor(
                 )
             }
 
+            // First, ensure root access is ready (critical for Magisk timing)
+            val rootReady = rootUtil.requestRootAccess()
+            if (!rootReady) {
+                logRepository.logError("ACCOUNT_CREATE", "Root-Zugriff konnte nicht angefordert werden")
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        currentStep = AccountCreateStep.ERROR,
+                        errorMessage = "Root-Zugriff nicht verfügbar. Bitte erteile Root-Berechtigung."
+                    )
+                }
+                return@launch
+            }
+            logRepository.logInfo("ACCOUNT_CREATE", "Root-Zugriff bestätigt")
+
             // Try to read current SSAID
             try {
                 val currentSsaidResult = ssaidUtil.readCurrentSsaid()
