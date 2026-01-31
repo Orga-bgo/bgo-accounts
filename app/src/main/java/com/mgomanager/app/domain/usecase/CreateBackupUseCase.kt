@@ -69,7 +69,7 @@ class CreateBackupUseCase @Inject constructor(
             val backupPath = "${request.backupRootPath}${request.prefix}$finalAccountName/"
             val backupDir = File(backupPath)
 
-            val createDirResult = rootUtil.executeCommand("mkdir -p $backupPath")
+            val createDirResult = rootUtil.executeCommand("mkdir -p \"$backupPath\"")
             if (createDirResult.isFailure) {
                 val errorMsg = createDirResult.exceptionOrNull()?.message ?: "Unknown error"
                 throw Exception("Backup-Verzeichnis konnte nicht erstellt werden: $errorMsg")
@@ -81,7 +81,7 @@ class CreateBackupUseCase @Inject constructor(
             copyDirectory(MGO_PREFS_PATH, "$backupPath/shared_prefs/", request.accountName)
 
             // Step 5: Copy SSAID file
-            val copyResult = rootUtil.executeCommand("cp $SSAID_PATH $backupPath/settings_ssaid.xml")
+            val copyResult = rootUtil.executeCommand("cp \"$SSAID_PATH\" \"$backupPath/settings_ssaid.xml\"")
             if (copyResult.isFailure) {
                 logRepository.logWarning("BACKUP", "SSAID-Datei konnte nicht kopiert werden", request.accountName)
             }
@@ -99,7 +99,7 @@ class CreateBackupUseCase @Inject constructor(
                 if (existingAccount != null) {
                     logRepository.logWarning("BACKUP", "Duplicate User ID found: ${extractedIds.userId} exists as ${existingAccount.fullName}", finalAccountName)
                     // Clean up the backup directory we just created
-                    rootUtil.executeCommand("rm -rf $backupPath")
+                    rootUtil.executeCommand("rm -rf \"$backupPath\"")
                     return@withContext BackupResult.DuplicateUserId(
                         userId = extractedIds.userId,
                         existingAccountName = existingAccount.fullName
@@ -111,13 +111,13 @@ class CreateBackupUseCase @Inject constructor(
             val ssaidFile = File("$backupPath/settings_ssaid.xml")
             if (!ssaidFile.exists()) {
                 logRepository.logError("BACKUP", "SSAID-Datei nicht vorhanden (MANDATORY)", finalAccountName)
-                rootUtil.executeCommand("rm -rf $backupPath")
+                rootUtil.executeCommand("rm -rf \"$backupPath\"")
                 throw Exception("SSAID-Datei konnte nicht kopiert werden (MANDATORY)")
             }
             val ssaid = idExtractor.extractSsaid(ssaidFile)
             if (ssaid == "nicht vorhanden" || ssaid.isBlank()) {
                 logRepository.logError("BACKUP", "SSAID konnte nicht extrahiert werden (MANDATORY)", finalAccountName)
-                rootUtil.executeCommand("rm -rf $backupPath")
+                rootUtil.executeCommand("rm -rf \"$backupPath\"")
                 throw Exception("SSAID konnte nicht extrahiert werden (MANDATORY)")
             }
 
@@ -176,7 +176,7 @@ class CreateBackupUseCase @Inject constructor(
     }
 
     private suspend fun copyDirectory(source: String, destination: String, accountName: String) {
-        val result = rootUtil.executeCommand("cp -r $source $destination")
+        val result = rootUtil.executeCommand("cp -r \"$source\" \"$destination\"")
         if (result.isSuccess) {
             logRepository.logInfo("BACKUP", "Verzeichnis kopiert: $source -> $destination", accountName)
         } else {

@@ -19,8 +19,8 @@ class FilePermissionManager @Inject constructor(
      */
     suspend fun getFilePermissions(path: String): Result<FilePermissions> {
         // Try multiple methods to get file permissions
-        // Method 1: stat command (newer Android)
-        val statResult = rootUtil.executeCommand("stat -c '%U:%G %a' $path")
+        // Method 1: stat command with proper quoting (newer Android)
+        val statResult = rootUtil.executeCommand("stat -c '%U:%G %a' \"$path\"")
 
         if (statResult.isSuccess) {
             return statResult.mapCatching { output ->
@@ -43,8 +43,21 @@ class FilePermissionManager @Inject constructor(
             }
         }
 
-        // Method 2: ls -l command (fallback for older Android)
-        val lsResult = rootUtil.executeCommand("ls -ld $path")
+        // Method 2: Try Android-specific stat format (some devices use different format)
+        // The piped command filters the stat output to extract only the relevant lines.
+        // If any part fails (stat, grep, or head), the entire command will fail and we
+        // fall back to the next method (Method 3: ls -ld). This is intentional for robustness.
+        val statAndroidResult = rootUtil.executeCommand("stat \"$path\" | grep -E 'Uid:|Access:' | head -2")
+        
+        if (statAndroidResult.isSuccess) {
+            val parseResult = parseAndroidStatOutput(statAndroidResult.getOrThrow(), path)
+            if (parseResult.isSuccess) {
+                return parseResult
+            }
+        }
+
+        // Method 3: ls -l command (fallback for older Android)
+        val lsResult = rootUtil.executeCommand("ls -ld \"$path\"")
 
         return lsResult.mapCatching { output ->
             // Expected format: "drwxr-xr-x 2 u0_a123 u0_a123 4096 Jan 24 20:00 /data/data/..."
@@ -65,6 +78,56 @@ class FilePermissionManager @Inject constructor(
                 group = group,
                 permissions = permissions
             )
+        }
+    }
+
+    /**
+     * Parse Android stat output format
+     * Example:
+     * Uid: ( 10123/ u0_a123)   Gid: ( 10123/ u0_a123)
+     * Access: (0755/drwxr-xr-x)
+     */
+    private fun parseAndroidStatOutput(output: String, path: String): Result<FilePermissions> {
+        return try {
+            val lines = output.trim().split("\n")
+            if (lines.size < 2) {
+                return Result.failure(Exception("Unexpected stat output format"))
+            }
+
+            // Parse Uid/Gid line
+            val uidGidLine = lines.firstOrNull { it.contains("Uid:") } 
+                ?: return Result.failure(Exception("No Uid line found"))
+            
+            // Extract owner and group from format: "Uid: ( 10123/ u0_a123)   Gid: ( 10123/ u0_a123)"
+            val uidMatch = Regex("Uid:\\s*\\(\\s*\\d+/\\s*(\\w+)\\)").find(uidGidLine)
+            val gidMatch = Regex("Gid:\\s*\\(\\s*\\d+/\\s*(\\w+)\\)").find(uidGidLine)
+            
+            val owner = uidMatch?.groupValues?.getOrNull(1) 
+                ?: return Result.failure(Exception("Cannot parse owner from: $uidGidLine"))
+            val group = gidMatch?.groupValues?.getOrNull(1) 
+                ?: return Result.failure(Exception("Cannot parse group from: $uidGidLine"))
+
+            // Parse Access line for permissions
+            val accessLine = lines.firstOrNull { it.contains("Access:") && it.contains("/") }
+                ?: return Result.failure(Exception("No Access line found"))
+            
+            // Extract permissions from format: "Access: (0755/drwxr-xr-x)"
+            // Remove leading zeros (e.g., "0755" -> "755")
+            // Special case: if all digits are zeros (e.g., "0000"), keep "0"
+            val permMatch = Regex("Access:\\s*\\((\\d+)/").find(accessLine)
+            val rawPermissions = permMatch?.groupValues?.getOrNull(1)
+                ?: return Result.failure(Exception("Cannot parse permissions from: $accessLine"))
+            
+            // dropWhile removes leading zeros, ifEmpty handles the all-zeros case
+            val permissions = rawPermissions.dropWhile { it == '0' }.ifEmpty { "0" }
+
+            Result.success(FilePermissions(
+                owner = owner,
+                group = group,
+                permissions = permissions
+            ))
+        } catch (e: Exception) {
+            Result.failure(Exception("Failed to parse stat output for $path: ${e.message}"))
         }
     }
 
@@ -93,13 +156,13 @@ class FilePermissionManager @Inject constructor(
      * Set file ownership
      */
     suspend fun setFileOwnership(path: String, owner: String, group: String): Result<Unit> {
-        return rootUtil.executeCommand("chown -R $owner:$group $path").map { }
+        return rootUtil.executeCommand("chown -R $owner:$group \"$path\"").map { }
     }
 
     /**
      * Set file permissions
      */
     suspend fun setFilePermissions(path: String, permissions: String): Result<Unit> {
-        return rootUtil.executeCommand("chmod -R $permissions $path").map { }
+        return rootUtil.executeCommand("chmod -R $permissions \"$path\"").map { }
     }
 }
