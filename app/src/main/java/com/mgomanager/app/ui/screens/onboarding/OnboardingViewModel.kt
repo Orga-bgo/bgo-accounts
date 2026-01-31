@@ -316,10 +316,12 @@ class OnboardingViewModel @Inject constructor(
             )
         }
 
-        if (allGranted) {
-            logRepository.logInfo("ONBOARDING", "Speicherberechtigungen erteilt")
-        } else {
-            logRepository.logWarning("ONBOARDING", "Speicherberechtigungen verweigert")
+        viewModelScope.launch {
+            if (allGranted) {
+                logRepository.logInfo("ONBOARDING", "Speicherberechtigungen erteilt")
+            } else {
+                logRepository.logWarning("ONBOARDING", "Speicherberechtigungen verweigert")
+            }
         }
     }
 
@@ -335,7 +337,9 @@ class OnboardingViewModel @Inject constructor(
      */
     fun requestSAFPicker() {
         _uiState.update { it.copy(showSAFPicker = true) }
-        logRepository.logInfo("ONBOARDING", "SAF-Ordnerauswahl angefordert")
+        viewModelScope.launch {
+            logRepository.logInfo("ONBOARDING", "SAF-Ordnerauswahl angefordert")
+        }
     }
 
     /**
@@ -355,7 +359,9 @@ class OnboardingViewModel @Inject constructor(
                             android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
             } catch (e: Exception) {
-                logRepository.logWarning("ONBOARDING", "Konnte keine persistenten URI-Berechtigungen erhalten: ${e.message}")
+                viewModelScope.launch {
+                    logRepository.logWarning("ONBOARDING", "Konnte keine persistenten URI-Berechtigungen erhalten: ${e.message}")
+                }
             }
 
             _uiState.update {
@@ -366,7 +372,9 @@ class OnboardingViewModel @Inject constructor(
                     error = null
                 )
             }
-            logRepository.logInfo("ONBOARDING", "SAF-Ordner ausgewählt: $uri")
+            viewModelScope.launch {
+                logRepository.logInfo("ONBOARDING", "SAF-Ordner ausgewählt: $uri")
+            }
         } else {
             _uiState.update {
                 it.copy(
@@ -386,7 +394,6 @@ class OnboardingViewModel @Inject constructor(
             if (usingSAF) {
                 // Save SAF URI
                 val uri = _uiState.value.backupDirectoryUri!!
-                appStateRepository.setBackupDirectoryUri(uri.toString())
                 appStateRepository.setBackupDirectory(uri.toString())
                 logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
                 _uiState.update { it.copy(isLoading = false, error = null) }
