@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import java.util.*
 import javax.inject.Inject
@@ -86,10 +87,26 @@ class SettingsDataStore @Inject constructor(
     }
 
     /**
-     * Get current session ID
+     * Get current session ID.
+     * Returns empty string if no session is persisted yet.
+     * Use ensureSessionPersisted() or generateNewSession() to ensure a session exists.
      */
     val currentSessionId: Flow<String> = context.dataStore.data.map { preferences ->
-        preferences[CURRENT_SESSION_ID] ?: generateNewSessionId()
+        preferences[CURRENT_SESSION_ID] ?: ""
+    }
+
+    /**
+     * Ensure a session ID is persisted.
+     * If no session exists, generates and persists a new one.
+     * @return The persisted session ID
+     */
+    suspend fun ensureSessionPersisted(): String {
+        val current = context.dataStore.data.map { it[CURRENT_SESSION_ID] }.first()
+        return if (current.isNullOrBlank()) {
+            generateNewSession()
+        } else {
+            current
+        }
     }
 
     /**
@@ -119,8 +136,6 @@ class SettingsDataStore @Inject constructor(
             preferences[APP_START_COUNT] = currentCount + 1
         }
     }
-
-    private fun generateNewSessionId(): String = UUID.randomUUID().toString()
 
     // ========== SSH Server Sync Settings ==========
 
