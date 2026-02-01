@@ -182,7 +182,7 @@ fun DuplicateResolveDialog(
                     }
                 }
 
-                HorizontalDivider()
+                Divider()
 
                 // List of duplicates
                 LazyColumn(

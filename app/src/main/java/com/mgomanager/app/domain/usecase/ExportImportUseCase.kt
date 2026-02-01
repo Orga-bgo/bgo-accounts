@@ -85,10 +85,10 @@ class ExportImportUseCase @Inject constructor(
                     }
                     logRepository.logInfo("EXPORT", "Backup files added to export")
                 }
-            }
 
-            // Add accounts.json with metadata
-            addAccountsJsonToZip(context, zos)
+                // Add accounts.json with metadata
+                addAccountsJsonToZip(context, zos)
+            }
 
             logRepository.logInfo("EXPORT", "Export completed: ${zipFile.absolutePath}")
 

@@ -478,7 +478,9 @@ class SettingsViewModel @Inject constructor(
         val tempDir = _uiState.value.pendingImportTempDir
 
         if (tempDir == null) {
-            logRepository.logError("SETTINGS", "Kein pending Import gefunden")
+            viewModelScope.launch {
+                logRepository.logError("SETTINGS", "Kein pending Import gefunden")
+            }
             _uiState.update {
                 it.copy(
                     showDuplicateResolveDialog = false,
