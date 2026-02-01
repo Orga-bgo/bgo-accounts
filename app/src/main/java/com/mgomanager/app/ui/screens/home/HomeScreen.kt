@@ -19,8 +19,6 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.mgomanager.app.data.model.Account
-import com.mgomanager.app.data.model.BackupResult
-import com.mgomanager.app.ui.components.BackupDialog
 import com.mgomanager.app.ui.components.GlobalHeader
 import com.mgomanager.app.ui.navigation.Screen
 import androidx.compose.foundation.layout.PaddingValues
@@ -244,11 +242,6 @@ fun HomeScreen(
         }
     }
 
-    // Dialogs
-    BackupDialogs(
-        uiState = uiState,
-        viewModel = viewModel
-    )
 }
 
 @Composable
@@ -338,184 +331,6 @@ fun CurrentAccountSection(
 }
 
 @Composable
-fun SearchAndSortSection(
-    searchQuery: String,
-    sortOption: SortOption,
-    sortDirection: SortDirection,
-    onSearchQueryChange: (String) -> Unit,
-    onSortOptionChange: (SortOption) -> Unit,
-    onToggleSortDirection: () -> Unit,
-    sortDropdownExpanded: Boolean,
-    onSortDropdownExpandedChange: (Boolean) -> Unit
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        // Search Field
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchQueryChange,
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Account suchen...") },
-            leadingIcon = {
-                Icon(Icons.Default.Search, contentDescription = "Suchen")
-            },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { onSearchQueryChange("") }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Löschen")
-                    }
-                }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(12.dp)
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Sort Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Sort Option Dropdown
-            Box(modifier = Modifier.weight(1f)) {
-                OutlinedButton(
-                    onClick = { onSortDropdownExpandedChange(true) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(
-                        text = "Sortiere nach: ${sortOption.displayName}",
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Start
-                    )
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Auswählen"
-                    )
-                }
-
-                DropdownMenu(
-                    expanded = sortDropdownExpanded,
-                    onDismissRequest = { onSortDropdownExpandedChange(false) }
-                ) {
-                    SortOption.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option.displayName) },
-                            onClick = {
-                                onSortOptionChange(option)
-                                onSortDropdownExpandedChange(false)
-                            },
-                            leadingIcon = {
-                                if (sortOption == option) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "Ausgewählt",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
-            }
-
-            // Sort Direction Toggle
-            OutlinedButton(
-                onClick = onToggleSortDirection,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(
-                    imageVector = if (sortDirection == SortDirection.ASC) {
-                        Icons.Default.ArrowUpward
-                    } else {
-                        Icons.Default.ArrowDownward
-                    },
-                    contentDescription = if (sortDirection == SortDirection.ASC) "Aufsteigend" else "Absteigend"
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(sortDirection.name)
-            }
-        }
-    }
-}
-
-@Composable
-fun AccountListSection(
-    accounts: List<Account>,
-    searchQuery: String,
-    onAccountClick: (Long) -> Unit
-) {
-    when {
-        accounts.isEmpty() && searchQuery.isNotBlank() -> {
-            // No search results
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.SearchOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Kein Account mit diesem Namen gefunden.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-
-        accounts.isEmpty() -> {
-            // No accounts at all
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Default.FolderOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Noch keine Backups vorhanden.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-
-        else -> {
-            // Account list
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(accounts, key = { it.id }) { account ->
-                    AccountListCard(
-                        account = account,
-                        onClick = { onAccountClick(account.id) }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun AccountListCard(
     account: Account,
     onClick: () -> Unit
@@ -556,118 +371,13 @@ fun AccountListCard(
                 )
             }
 
-            // Status Indicators
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (account.hasError) {
-                    Icon(
-                        Icons.Default.Error,
-                        contentDescription = "Fehler",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                if (account.susLevel.value > 0) {
-                    Icon(
-                        Icons.Default.Warning,
-                        contentDescription = "Sus",
-                        tint = account.getBorderColor(),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Icon(
-                    Icons.Default.ChevronRight,
-                    contentDescription = "Details",
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                )
-            }
+            // Navigation indicator only (no status indicators per P2 spec)
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = "Details",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+            )
         }
     }
 }
 
-@Composable
-fun BackupDialogs(
-    uiState: HomeUiState,
-    viewModel: HomeViewModel
-) {
-    // Backup Dialog
-    if (uiState.showBackupDialog) {
-        BackupDialog(
-            onDismiss = { viewModel.hideBackupDialog() },
-            onConfirm = { name, hasFb, fbUser, fbPass, fb2fa, fbMail ->
-                viewModel.createBackup(name, hasFb, fbUser, fbPass, fb2fa, fbMail)
-            }
-        )
-    }
-
-    // Backup Result Dialog
-    uiState.backupResult?.let { result ->
-        when (result) {
-            is BackupResult.Success -> {
-                AlertDialog(
-                    onDismissRequest = { viewModel.clearBackupResult() },
-                    title = { Text("Backup erfolgreich!") },
-                    text = { Text("Account '${result.account.fullName}' wurde erfolgreich gesichert.") },
-                    confirmButton = {
-                        TextButton(onClick = { viewModel.clearBackupResult() }) {
-                            Text("OK")
-                        }
-                    }
-                )
-            }
-
-            is BackupResult.Failure -> {
-                AlertDialog(
-                    onDismissRequest = { viewModel.clearBackupResult() },
-                    title = { Text("Backup fehlgeschlagen") },
-                    text = { Text(result.error) },
-                    confirmButton = {
-                        TextButton(onClick = { viewModel.clearBackupResult() }) {
-                            Text("OK")
-                        }
-                    }
-                )
-            }
-
-            is BackupResult.PartialSuccess -> {
-                AlertDialog(
-                    onDismissRequest = { viewModel.clearBackupResult() },
-                    title = { Text("Backup teilweise erfolgreich") },
-                    text = {
-                        Text("Backup erstellt, aber folgende IDs fehlen:\n${result.missingIds.joinToString(", ")}")
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { viewModel.clearBackupResult() }) {
-                            Text("OK")
-                        }
-                    }
-                )
-            }
-
-            is BackupResult.DuplicateUserId -> {
-                // Handled by duplicateUserIdDialog
-            }
-        }
-    }
-
-    // Duplicate User ID Dialog
-    uiState.duplicateUserIdDialog?.let { info ->
-        AlertDialog(
-            onDismissRequest = { viewModel.cancelDuplicateBackup() },
-            title = { Text("Doppelte User ID") },
-            text = { Text("User ID bereits als '${info.existingAccountName}' vorhanden.") },
-            confirmButton = {
-                TextButton(onClick = { viewModel.confirmDuplicateBackup() }) {
-                    Text("Fortfahren")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.cancelDuplicateBackup() }) {
-                    Text("Abbrechen")
-                }
-            }
-        )
-    }
-}

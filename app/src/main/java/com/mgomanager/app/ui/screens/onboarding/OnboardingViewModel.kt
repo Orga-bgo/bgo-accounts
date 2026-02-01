@@ -391,21 +391,50 @@ class OnboardingViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, error = null) }
 
             val uri = _uiState.value.backupDirectoryUri
-            if (uri == null) {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Bitte wähle einen Backup-Ordner aus."
-                    )
-                }
-                return@launch
-            }
+            val legacyPath = _uiState.value.backupDirectory
+            val requiresSAF = _uiState.value.requiresSAF
+            val storageGranted = _uiState.value.storagePermissionGranted
 
-            // Save SAF URI
-            appStateRepository.setBackupDirectory(uri.toString())
-            logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
-            _uiState.update { it.copy(isLoading = false, error = null) }
-            nextStep()
+            // Android 11+: Require SAF URI
+            // Android < 11: Allow legacy path if storage permission granted
+            when {
+                uri != null -> {
+                    // SAF URI available - use it (Android 11+ or user chose SAF)
+                    appStateRepository.setBackupDirectory(uri.toString())
+                    logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (SAF) gespeichert: $uri")
+                    _uiState.update { it.copy(isLoading = false, error = null) }
+                    nextStep()
+                }
+                !requiresSAF && storageGranted && legacyPath.isNotBlank() -> {
+                    // Legacy path for Android < 11 with storage permission
+                    // Ensure directory exists
+                    val dir = java.io.File(legacyPath)
+                    if (!dir.exists()) {
+                        dir.mkdirs()
+                    }
+                    if (dir.exists() && dir.canWrite()) {
+                        appStateRepository.setBackupDirectory(legacyPath)
+                        logRepository.logInfo("ONBOARDING", "Backup-Verzeichnis (Legacy) gespeichert: $legacyPath")
+                        _uiState.update { it.copy(isLoading = false, error = null) }
+                        nextStep()
+                    } else {
+                        _uiState.update {
+                            it.copy(
+                                isLoading = false,
+                                error = "Backup-Ordner konnte nicht erstellt werden."
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Bitte wähle einen Backup-Ordner aus."
+                        )
+                    }
+                }
+            }
         }
     }
 

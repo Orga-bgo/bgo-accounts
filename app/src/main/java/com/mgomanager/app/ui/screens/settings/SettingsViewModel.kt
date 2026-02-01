@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mgomanager.app.data.local.preferences.SettingsDataStore
+import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.usecase.ExportImportUseCase
 import com.mgomanager.app.domain.util.RootUtil
@@ -56,7 +57,8 @@ data class SettingsUiState(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsDataStore: SettingsDataStore,
+    private val settingsDataStore: SettingsDataStore, // Legacy, still used for SSH settings
+    private val appStateRepository: AppStateRepository, // Primary source for Prefix and BackupDirectory
     private val rootUtil: RootUtil,
     private val exportImportUseCase: ExportImportUseCase,
     private val sshSyncService: SSHSyncService,
@@ -76,20 +78,22 @@ class SettingsViewModel @Inject constructor(
 
     private fun loadSettings() {
         viewModelScope.launch {
-            // Load basic settings from DataStore
-            combine(
-                settingsDataStore.accountPrefix,
-                settingsDataStore.backupRootPath,
-                settingsDataStore.appStartCount
-            ) { prefix, path, count ->
-                _uiState.update {
-                    it.copy(
-                        accountPrefix = prefix,
-                        backupRootPath = path,
-                        appStartCount = count
-                    )
-                }
-            }.collect { }
+            // Load prefix and backup path from AppStateRepository (primary source per P6 spec)
+            val prefix = appStateRepository.getDefaultPrefix() ?: SettingsDataStore.DEFAULT_PREFIX
+            val backupPath = appStateRepository.getBackupDirectory() ?: SettingsDataStore.DEFAULT_BACKUP_PATH
+            _uiState.update {
+                it.copy(
+                    accountPrefix = prefix,
+                    backupRootPath = backupPath
+                )
+            }
+        }
+
+        viewModelScope.launch {
+            // Load app start count from legacy DataStore
+            settingsDataStore.appStartCount.collect { count ->
+                _uiState.update { it.copy(appStartCount = count) }
+            }
         }
 
         // Load SSH settings (split into separate collectors due to combine limit of 5 flows)
@@ -157,6 +161,7 @@ class SettingsViewModel @Inject constructor(
      * Update prefix with validation per P6 spec:
      * - not empty
      * - no path characters
+     * Uses AppStateRepository (primary source per P6 consolidation)
      */
     fun updatePrefix(prefix: String) {
         viewModelScope.launch {
@@ -172,17 +177,25 @@ class SettingsViewModel @Inject constructor(
                 }
             }
 
-            settingsDataStore.setAccountPrefix(prefix)
+            // Save to AppStateRepository (primary) and SettingsDataStore (legacy backup)
+            appStateRepository.setDefaultPrefix(prefix)
+            settingsDataStore.setAccountPrefix(prefix) // Keep in sync for backward compatibility
             logRepository.logInfo("SETTINGS", "Präfix geändert: $prefix")
-            _uiState.update { it.copy(prefixSaved = true, prefixError = null) }
+            _uiState.update { it.copy(accountPrefix = prefix, prefixSaved = true, prefixError = null) }
         }
     }
 
+    /**
+     * Update backup path via SAF or direct path
+     * Uses AppStateRepository (primary source per P6 consolidation)
+     */
     fun updateBackupPath(path: String) {
         viewModelScope.launch {
-            settingsDataStore.setBackupRootPath(path)
+            // Save to AppStateRepository (primary) and SettingsDataStore (legacy backup)
+            appStateRepository.setBackupDirectory(path)
+            settingsDataStore.setBackupRootPath(path) // Keep in sync for backward compatibility
             logRepository.logInfo("SETTINGS", "Backup-Pfad geändert: $path")
-            _uiState.update { it.copy(pathSaved = true) }
+            _uiState.update { it.copy(backupRootPath = path, pathSaved = true) }
         }
     }
 

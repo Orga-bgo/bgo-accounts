@@ -118,29 +118,21 @@ class SystemCheckViewModel @Inject constructor(
 
             val (installed, hasChanged) = checkMonopolyGoStatus()
             checks[1] = checks[1].copy(
-                status = if (installed) CheckStatus.PASSED else CheckStatus.FAILED,
+                status = if (installed) CheckStatus.PASSED else CheckStatus.WARNING,
                 message = when {
                     installed && hasChanged -> "Installation erkannt (Status aktualisiert)"
                     installed -> "Installiert"
-                    else -> "Nicht installiert"
+                    else -> "Nicht installiert (optionale Funktion eingeschränkt)"
                 }
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
-            // Critical check: Monopoly Go must be installed
+            // Log warning if not installed, but continue (not critical per P1 spec)
             if (!installed) {
-                _uiState.update {
-                    it.copy(
-                        isChecking = false,
-                        allChecksPassed = false,
-                        criticalError = "Monopoly Go nicht installiert!"
-                    )
-                }
-                logRepository.logError("SYSTEM_CHECK", "Monopoly Go nicht installiert")
-                return@launch
+                logRepository.logWarning("SYSTEM_CHECK", "Monopoly Go nicht installiert - App startet trotzdem")
             }
 
-            // Check 3: UID-Update (if Monopoly Go installed)
+            // Check 3: UID-Update (only if Monopoly Go installed)
             checks.add(
                 SystemCheck(
                     id = "uid",
@@ -150,10 +142,18 @@ class SystemCheckViewModel @Inject constructor(
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
-            val uidCheck = updateMonopolyGoUid()
+            val uidCheck = if (installed) updateMonopolyGoUid() else false
             checks[2] = checks[2].copy(
-                status = if (uidCheck) CheckStatus.PASSED else CheckStatus.WARNING,
-                message = if (uidCheck) "UID gespeichert" else "UID konnte nicht ermittelt werden"
+                status = when {
+                    !installed -> CheckStatus.WARNING
+                    uidCheck -> CheckStatus.PASSED
+                    else -> CheckStatus.WARNING
+                },
+                message = when {
+                    !installed -> "Übersprungen (Monopoly Go nicht installiert)"
+                    uidCheck -> "UID gespeichert"
+                    else -> "UID konnte nicht ermittelt werden"
+                }
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
@@ -174,7 +174,7 @@ class SystemCheckViewModel @Inject constructor(
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
-            // Check 5: /data/data Permissions
+            // Check 5: /data/data Permissions (only testable if Monopoly Go installed)
             checks.add(
                 SystemCheck(
                     id = "data_data",
@@ -184,17 +184,25 @@ class SystemCheckViewModel @Inject constructor(
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
-            val dataDataAccess = checkDataDataAccess()
+            val dataDataAccess = if (installed) checkDataDataAccess() else true // Skip check if not installed
             checks[4] = checks[4].copy(
-                status = if (dataDataAccess) CheckStatus.PASSED else CheckStatus.FAILED,
-                message = if (dataDataAccess) "Zugriff OK" else "Zugriff verweigert"
+                status = when {
+                    !installed -> CheckStatus.WARNING
+                    dataDataAccess -> CheckStatus.PASSED
+                    else -> CheckStatus.FAILED
+                },
+                message = when {
+                    !installed -> "Übersprungen (Monopoly Go nicht installiert)"
+                    dataDataAccess -> "Zugriff OK"
+                    else -> "Zugriff verweigert"
+                }
             )
             _uiState.update { it.copy(checks = checks.toList()) }
 
-            // Final evaluation - critical checks: root, monopoly_go, data_data
+            // Final evaluation - critical checks: root, data_data (monopoly_go is now WARNING, not critical)
             val allPassed = checks.none { it.status == CheckStatus.FAILED }
             val criticalFailed = checks.any {
-                it.status == CheckStatus.FAILED && it.id in listOf("root", "monopoly_go", "data_data")
+                it.status == CheckStatus.FAILED && it.id in listOf("root", "data_data")
             }
 
             _uiState.update {

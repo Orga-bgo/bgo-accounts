@@ -37,6 +37,13 @@ class AppStateRepository @Inject constructor(
         val SSH_PORT = intPreferencesKey("ssh_port")
         val SSH_USERNAME = stringPreferencesKey("ssh_username")
         val SSH_PASSWORD = stringPreferencesKey("ssh_password")
+        // Additional SSH Keys (P6 consolidation)
+        val SSH_AUTO_CHECK_ON_START = booleanPreferencesKey("ssh_auto_check_on_start")
+        val SSH_AUTO_UPLOAD_ON_EXPORT = booleanPreferencesKey("ssh_auto_upload_on_export")
+        val SSH_LAST_SYNC_TIMESTAMP = longPreferencesKey("ssh_last_sync_timestamp")
+        val SSH_PRIVATE_KEY_PATH = stringPreferencesKey("ssh_private_key_path")
+        val SSH_AUTH_METHOD = stringPreferencesKey("ssh_auth_method")
+        val SSH_BACKUP_PATH = stringPreferencesKey("ssh_backup_path")
 
         // System Status Keys
         val MONOPOLY_GO_UID = intPreferencesKey("monopoly_go_uid")
@@ -191,6 +198,59 @@ class AppStateRepository @Inject constructor(
             username = prefs[SSH_USERNAME],
             password = prefs[SSH_PASSWORD]
         )
+    }
+
+    // Additional SSH Settings (P6 consolidation)
+    suspend fun isSshAutoCheckOnStart(): Boolean {
+        return dataStore.data.first()[SSH_AUTO_CHECK_ON_START] ?: false
+    }
+
+    suspend fun setSshAutoCheckOnStart(enabled: Boolean) {
+        dataStore.edit { it[SSH_AUTO_CHECK_ON_START] = enabled }
+    }
+
+    fun isSshAutoCheckOnStartFlow(): Flow<Boolean> {
+        return dataStore.data.map { it[SSH_AUTO_CHECK_ON_START] ?: false }
+    }
+
+    suspend fun isSshAutoUploadOnExport(): Boolean {
+        return dataStore.data.first()[SSH_AUTO_UPLOAD_ON_EXPORT] ?: false
+    }
+
+    suspend fun setSshAutoUploadOnExport(enabled: Boolean) {
+        dataStore.edit { it[SSH_AUTO_UPLOAD_ON_EXPORT] = enabled }
+    }
+
+    suspend fun getSshLastSyncTimestamp(): Long {
+        return dataStore.data.first()[SSH_LAST_SYNC_TIMESTAMP] ?: 0L
+    }
+
+    suspend fun setSshLastSyncTimestamp(timestamp: Long) {
+        dataStore.edit { it[SSH_LAST_SYNC_TIMESTAMP] = timestamp }
+    }
+
+    suspend fun getSshPrivateKeyPath(): String? {
+        return dataStore.data.first()[SSH_PRIVATE_KEY_PATH]
+    }
+
+    suspend fun setSshPrivateKeyPath(path: String) {
+        dataStore.edit { it[SSH_PRIVATE_KEY_PATH] = path }
+    }
+
+    suspend fun getSshAuthMethod(): String {
+        return dataStore.data.first()[SSH_AUTH_METHOD] ?: "key_only"
+    }
+
+    suspend fun setSshAuthMethod(method: String) {
+        dataStore.edit { it[SSH_AUTH_METHOD] = method }
+    }
+
+    suspend fun getSshBackupPath(): String? {
+        return dataStore.data.first()[SSH_BACKUP_PATH]
+    }
+
+    suspend fun setSshBackupPath(path: String) {
+        dataStore.edit { it[SSH_BACKUP_PATH] = path }
     }
 
     // ============================================================

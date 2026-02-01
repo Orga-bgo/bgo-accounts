@@ -65,8 +65,9 @@ class CreateBackupUseCase @Inject constructor(
                 logRepository.logInfo("BACKUP", "Account-Name umbenannt: ${request.accountName} -> $finalAccountName")
             }
 
-            // Step 3: Create backup directory
-            val backupPath = "${request.backupRootPath}${request.prefix}$finalAccountName/"
+            // Step 3: Create backup directory (normalize path to avoid double slashes)
+            val normalizedRootPath = request.backupRootPath.trimEnd('/')
+            val backupPath = "$normalizedRootPath/${request.prefix}$finalAccountName/"
             val backupDir = File(backupPath)
 
             val createDirResult = rootUtil.executeCommand("mkdir -p \"$backupPath\"")
@@ -76,18 +77,18 @@ class CreateBackupUseCase @Inject constructor(
             }
             logRepository.logInfo("BACKUP", "Backup-Verzeichnis erstellt: $backupPath", request.accountName)
 
-            // Step 4: Copy directories
-            copyDirectory(MGO_FILES_PATH, "$backupPath/DiskBasedCacheDirectory/", request.accountName)
-            copyDirectory(MGO_PREFS_PATH, "$backupPath/shared_prefs/", request.accountName)
+            // Step 4: Copy directories (backupPath already ends with /, so no extra slash needed)
+            copyDirectory(MGO_FILES_PATH, "${backupPath}DiskBasedCacheDirectory/", request.accountName)
+            copyDirectory(MGO_PREFS_PATH, "${backupPath}shared_prefs/", request.accountName)
 
             // Step 5: Copy SSAID file
-            val copyResult = rootUtil.executeCommand("cp \"$SSAID_PATH\" \"$backupPath/settings_ssaid.xml\"")
+            val copyResult = rootUtil.executeCommand("cp \"$SSAID_PATH\" \"${backupPath}settings_ssaid.xml\"")
             if (copyResult.isFailure) {
                 logRepository.logWarning("BACKUP", "SSAID-Datei konnte nicht kopiert werden", request.accountName)
             }
 
             // Step 6: Extract IDs
-            val playerPrefsFile = File("$backupPath/shared_prefs/$PLAYER_PREFS_FILE")
+            val playerPrefsFile = File("${backupPath}shared_prefs/$PLAYER_PREFS_FILE")
             val extractedIds = idExtractor.extractIdsFromPlayerPrefs(playerPrefsFile).getOrElse {
                 logRepository.logError("BACKUP", "ID-Extraktion fehlgeschlagen", request.accountName, it as? Exception)
                 throw Exception("User ID konnte nicht extrahiert werden (MANDATORY)")
@@ -108,7 +109,7 @@ class CreateBackupUseCase @Inject constructor(
             }
 
             // Step 7: Extract SSAID (MANDATORY per P3 spec)
-            val ssaidFile = File("$backupPath/settings_ssaid.xml")
+            val ssaidFile = File("${backupPath}settings_ssaid.xml")
             if (!ssaidFile.exists()) {
                 logRepository.logError("BACKUP", "SSAID-Datei nicht vorhanden (MANDATORY)", finalAccountName)
                 rootUtil.executeCommand("rm -rf \"$backupPath\"")
