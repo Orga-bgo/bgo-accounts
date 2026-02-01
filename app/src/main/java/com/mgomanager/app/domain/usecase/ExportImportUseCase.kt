@@ -1,7 +1,9 @@
 package com.mgomanager.app.domain.usecase
 
 import android.content.Context
+import android.net.Uri
 import android.os.Environment
+import com.mgomanager.app.data.local.database.entities.AccountEntity
 import com.mgomanager.app.data.local.preferences.SettingsDataStore
 import com.mgomanager.app.data.repository.AccountRepository
 import com.mgomanager.app.data.repository.LogRepository
@@ -10,6 +12,8 @@ import com.mgomanager.app.domain.util.SSHOperationResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -31,6 +35,12 @@ class ExportImportUseCase @Inject constructor(
         const val EXPORT_DIR = "/storage/emulated/0/mgo/exports/"
         const val DB_FOLDER = "database"
         const val BACKUPS_FOLDER = "backups"
+        const val ACCOUNTS_JSON = "accounts.json"
+    }
+
+    private val json = Json {
+        prettyPrint = true
+        ignoreUnknownKeys = true
     }
 
     /**
@@ -76,6 +86,9 @@ class ExportImportUseCase @Inject constructor(
                     logRepository.logInfo("EXPORT", "Backup files added to export")
                 }
             }
+
+            // Add accounts.json with metadata
+            addAccountsJsonToZip(context, zos)
 
             logRepository.logInfo("EXPORT", "Export completed: ${zipFile.absolutePath}")
 
@@ -197,6 +210,105 @@ class ExportImportUseCase @Inject constructor(
     private fun extractFile(zis: ZipInputStream, destFile: File) {
         FileOutputStream(destFile).use { fos ->
             zis.copyTo(fos)
+        }
+    }
+
+    /**
+     * Export data to a SAF-selected URI (for CreateDocument result)
+     */
+    suspend fun exportDataToUri(context: Context, uri: Uri): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            logRepository.logInfo("EXPORT", "Starting SAF export to: $uri")
+
+            // Get backup path from settings
+            val backupPath = settingsDataStore.backupRootPath.first()
+
+            context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                ZipOutputStream(outputStream).use { zos ->
+                    // Add database file
+                    val dbFile = context.getDatabasePath("mgo_database")
+                    if (dbFile.exists()) {
+                        addFileToZip(zos, dbFile, "$DB_FOLDER/${dbFile.name}")
+                        logRepository.logInfo("EXPORT", "Database added to export")
+                    }
+
+                    // Add all backup directories
+                    val backupsDir = File(backupPath)
+                    if (backupsDir.exists() && backupsDir.isDirectory) {
+                        backupsDir.listFiles()?.forEach { accountDir ->
+                            if (accountDir.isDirectory && accountDir.name != "archive") {
+                                addDirectoryToZip(zos, accountDir, "$BACKUPS_FOLDER/${accountDir.name}")
+                            }
+                        }
+                        logRepository.logInfo("EXPORT", "Backup files added to export")
+                    }
+
+                    // Add accounts.json with metadata
+                    addAccountsJsonToZip(context, zos)
+                }
+            } ?: run {
+                logRepository.logError("EXPORT", "Could not open output stream")
+                return@withContext Result.failure(Exception("Konnte Output-Stream nicht öffnen"))
+            }
+
+            logRepository.logInfo("EXPORT", "SAF Export completed successfully")
+
+            // Auto-upload to SSH server if enabled
+            val autoUpload = settingsDataStore.sshAutoUploadOnExport.first()
+            val sshServer = settingsDataStore.sshServer.first()
+
+            if (autoUpload && sshServer.isNotBlank()) {
+                logRepository.logInfo("EXPORT", "SAF export does not support auto-upload")
+            }
+
+            Result.success(Unit)
+
+        } catch (e: Exception) {
+            logRepository.logError("EXPORT", "SAF Export failed: ${e.message}", exception = e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Add accounts.json to the ZIP with all account metadata
+     */
+    private suspend fun addAccountsJsonToZip(context: Context, zos: ZipOutputStream) {
+        try {
+            val accounts = accountRepository.getAllAccountsList()
+            val accountDataList = accounts.map { account ->
+                ImportAccountData(
+                    id = account.id,
+                    accountName = account.accountName,
+                    prefix = account.prefix,
+                    createdAt = account.createdAt,
+                    lastPlayedAt = account.lastPlayedAt,
+                    userId = account.userId,
+                    gaid = account.gaid,
+                    deviceToken = account.deviceToken,
+                    appSetId = account.appSetId,
+                    ssaid = account.ssaid,
+                    susLevelValue = account.susLevel.value,
+                    hasError = account.hasError,
+                    hasFacebookLink = account.hasFacebookLink,
+                    fbUsername = account.fbUsername,
+                    fbPassword = account.fbPassword,
+                    fb2FA = account.fb2FA,
+                    fbTempMail = account.fbTempMail,
+                    backupPath = account.backupPath,
+                    fileOwner = account.fileOwner,
+                    fileGroup = account.fileGroup,
+                    filePermissions = account.filePermissions
+                )
+            }
+
+            val jsonString = json.encodeToString(accountDataList)
+            zos.putNextEntry(ZipEntry(ACCOUNTS_JSON))
+            zos.write(jsonString.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            logRepository.logInfo("EXPORT", "accounts.json added with ${accountDataList.size} accounts")
+        } catch (e: Exception) {
+            logRepository.logError("EXPORT", "Failed to add accounts.json: ${e.message}")
         }
     }
 }
