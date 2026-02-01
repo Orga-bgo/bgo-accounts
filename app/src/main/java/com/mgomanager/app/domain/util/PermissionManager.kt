@@ -54,16 +54,6 @@ class PermissionManager @Inject constructor(
             Manifest.permission.READ_EXTERNAL_STORAGE,
             Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
-
-        // Permissions for Android 13+
-        val MEDIA_PERMISSIONS = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO
-            )
-        } else {
-            emptyArray()
-        }
     }
 
     /**
@@ -71,12 +61,6 @@ class PermissionManager @Inject constructor(
      */
     fun hasStoragePermissions(): Boolean {
         val hasPermission = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                // Android 13+ - Check media permissions
-                MEDIA_PERMISSIONS.all { permission ->
-                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-                }
-            }
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
                 // Android 11+ - Check MANAGE_EXTERNAL_STORAGE
                 Environment.isExternalStorageManager()
@@ -100,16 +84,6 @@ class PermissionManager @Inject constructor(
      */
     fun getStoragePermissionStatus(): StoragePermissionStatus {
         return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                val allGranted = MEDIA_PERMISSIONS.all { permission ->
-                    ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-                }
-                if (allGranted) {
-                    StoragePermissionStatus.GRANTED
-                } else {
-                    StoragePermissionStatus.DENIED
-                }
-            }
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
                 if (Environment.isExternalStorageManager()) {
                     StoragePermissionStatus.GRANTED
@@ -136,9 +110,8 @@ class PermissionManager @Inject constructor(
      */
     fun getRequiredPermissions(): Array<String> {
         return when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> MEDIA_PERMISSIONS
             Build.VERSION.SDK_INT < Build.VERSION_CODES.R -> LEGACY_STORAGE_PERMISSIONS
-            else -> emptyArray() // Android 11-12 use SAF or MANAGE_EXTERNAL_STORAGE
+            else -> emptyArray() // Android 11+ use SAF or MANAGE_EXTERNAL_STORAGE
         }
     }
 
