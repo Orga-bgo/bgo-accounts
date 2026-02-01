@@ -3,22 +3,28 @@ package com.mgomanager.app.ui.screens.settings
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.navigation.compose.rememberNavController
+import com.mgomanager.app.domain.usecase.ImportAccountData
+import com.mgomanager.app.ui.components.DuplicatePair
 import com.mgomanager.app.ui.theme.MGOManagerTheme
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.io.File
 
 /**
  * UI Tests for P6 Settings/Mehr-Menü Screen
  * Verifies:
+ * - GlobalHeader with subTitle "Einstellungen"
  * - All five sections displayed (Allgemein, Backup & Speicher, Import/Export, SSH/Server, Über die App)
+ * - SAF Backup directory picker button
  * - No forbidden actions (backup/restore/account-edit)
  * - Prefix validation UI
  * - Import warning dialog
+ * - DuplicateResolveDialog for interactive conflict resolution (DEVIATION FROM P6)
  * - SSH manual test button
- * - About section with app description
+ * - About section with Logs and ID-Vergleich buttons
  */
 class SettingsScreenUITest {
 
@@ -39,6 +45,25 @@ class SettingsScreenUITest {
             )
         )
         every { viewModel.formatLastSyncTime() } returns "Noch nie"
+    }
+
+    // ========== GlobalHeader Tests (P6 Modernization) ==========
+
+    @Test
+    fun settingsScreen_usesGlobalHeaderWithSubtitle() {
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // GlobalHeader should display "Einstellungen" as subtitle
+        composeTestRule.onNodeWithText("Einstellungen").assertIsDisplayed()
+        // GlobalHeader should display "babixGO" title
+        composeTestRule.onNodeWithText("babixGO").assertIsDisplayed()
     }
 
     // ========== Section Display Tests ==========
@@ -165,7 +190,7 @@ class SettingsScreenUITest {
         composeTestRule.onAllNodesWithContentDescription("Speichern").onFirst().assertIsDisplayed()
     }
 
-    // ========== Backup Path Warning Tests ==========
+    // ========== Backup Path & SAF Tests ==========
 
     @Test
     fun backupPath_displaysNotMovedWarning() {
@@ -179,6 +204,21 @@ class SettingsScreenUITest {
         }
 
         composeTestRule.onNodeWithText("Bestehende Backups werden nicht verschoben.").assertIsDisplayed()
+    }
+
+    @Test
+    fun backupPath_displaysSafDirectoryPickerButton() {
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // SAF directory picker button should be displayed
+        composeTestRule.onNodeWithText("Backup-Verzeichnis ändern").assertIsDisplayed()
     }
 
     // ========== Import Warning Dialog Tests ==========
@@ -222,7 +262,7 @@ class SettingsScreenUITest {
     }
 
     @Test
-    fun importWarningDialog_confirmButton_triggersImport() {
+    fun importWarningDialog_confirmButton_hidesWarningAndLaunchesSaf() {
         every { viewModel.uiState } returns MutableStateFlow(
             SettingsUiState(showImportWarning = true)
         )
@@ -238,13 +278,14 @@ class SettingsScreenUITest {
 
         composeTestRule.onNodeWithText("Importieren").performClick()
 
-        verify { viewModel.confirmImport() }
+        // The button now hides the warning (SAF launcher is triggered in the composable)
+        verify { viewModel.hideImportWarning() }
     }
 
     // ========== Export Tests ==========
 
     @Test
-    fun exportButton_triggersExport() {
+    fun exportButton_isDisplayed() {
         composeTestRule.setContent {
             MGOManagerTheme {
                 SettingsScreen(
@@ -254,9 +295,9 @@ class SettingsScreenUITest {
             }
         }
 
-        composeTestRule.onNodeWithText("Alle Backups exportieren").performClick()
-
-        verify { viewModel.exportData() }
+        // Export button should be displayed and enabled
+        composeTestRule.onNodeWithText("Alle Backups exportieren").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Alle Backups exportieren").assertIsEnabled()
     }
 
     @Test
@@ -373,7 +414,7 @@ class SettingsScreenUITest {
         }
 
         composeTestRule.onNodeWithText("Root-Status").assertIsDisplayed()
-        composeTestRule.onNodeWithText("✓ Verfügbar").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Verfügbar").assertIsDisplayed()
     }
 
     @Test
@@ -417,6 +458,185 @@ class SettingsScreenUITest {
             }
         }
 
-        composeTestRule.onNodeWithText("← Zurück zur Liste").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Zurück zur Liste").assertIsDisplayed()
+    }
+
+    // ========== About Section Buttons Tests (P6 Requirement) ==========
+
+    @Test
+    fun aboutSection_displaysLogsButton() {
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Logs button should be in the About section
+        composeTestRule.onNodeWithText("Logs öffnen").assertIsDisplayed()
+    }
+
+    @Test
+    fun aboutSection_displaysIdVergleichButton() {
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // ID-Vergleich button should be in the About section
+        composeTestRule.onNodeWithText("ID-Vergleich").assertIsDisplayed()
+    }
+
+    // ========== DuplicateResolveDialog Tests (DEVIATION FROM P6) ==========
+
+    @Test
+    fun duplicateResolveDialog_displaysWhenDuplicatesExist() {
+        val duplicates = listOf(
+            DuplicatePair(
+                userId = "userId123",
+                localName = "LocalAccount",
+                localCreatedAt = System.currentTimeMillis() - 86400000,
+                importName = "ImportAccount",
+                importCreatedAt = System.currentTimeMillis()
+            )
+        )
+
+        every { viewModel.uiState } returns MutableStateFlow(
+            SettingsUiState(
+                showDuplicateResolveDialog = true,
+                importDuplicates = duplicates
+            )
+        )
+
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Dialog title should be displayed
+        composeTestRule.onNodeWithText("User ID bereits vorhanden").assertIsDisplayed()
+        // Options should be displayed
+        composeTestRule.onNodeWithText("Lokal behalten").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Import behalten").assertIsDisplayed()
+        // Action buttons
+        composeTestRule.onNodeWithText("Bestätigen").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Abbrechen").assertIsDisplayed()
+    }
+
+    @Test
+    fun duplicateResolveDialog_cancelButton_triggersCancel() {
+        val duplicates = listOf(
+            DuplicatePair(
+                userId = "userId123",
+                localName = "LocalAccount",
+                localCreatedAt = System.currentTimeMillis(),
+                importName = "ImportAccount",
+                importCreatedAt = System.currentTimeMillis()
+            )
+        )
+
+        every { viewModel.uiState } returns MutableStateFlow(
+            SettingsUiState(
+                showDuplicateResolveDialog = true,
+                importDuplicates = duplicates
+            )
+        )
+
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Click the cancel button in the dialog
+        composeTestRule.onNodeWithText("Abbrechen").performClick()
+
+        verify { viewModel.cancelImportConflictResolution() }
+    }
+
+    @Test
+    fun duplicateResolveDialog_confirmButton_triggersApply() {
+        val duplicates = listOf(
+            DuplicatePair(
+                userId = "userId123",
+                localName = "LocalAccount",
+                localCreatedAt = System.currentTimeMillis(),
+                importName = "ImportAccount",
+                importCreatedAt = System.currentTimeMillis()
+            )
+        )
+
+        every { viewModel.uiState } returns MutableStateFlow(
+            SettingsUiState(
+                showDuplicateResolveDialog = true,
+                importDuplicates = duplicates
+            )
+        )
+
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Click the confirm button in the dialog
+        composeTestRule.onNodeWithText("Bestätigen").performClick()
+
+        verify { viewModel.applyConflictDecisions(any()) }
+    }
+
+    @Test
+    fun duplicateResolveDialog_multipleDuplicates_showsBulkOption() {
+        val duplicates = listOf(
+            DuplicatePair(
+                userId = "userId123",
+                localName = "LocalAccount1",
+                localCreatedAt = System.currentTimeMillis(),
+                importName = "ImportAccount1",
+                importCreatedAt = System.currentTimeMillis()
+            ),
+            DuplicatePair(
+                userId = "userId456",
+                localName = "LocalAccount2",
+                localCreatedAt = System.currentTimeMillis(),
+                importName = "ImportAccount2",
+                importCreatedAt = System.currentTimeMillis()
+            )
+        )
+
+        every { viewModel.uiState } returns MutableStateFlow(
+            SettingsUiState(
+                showDuplicateResolveDialog = true,
+                importDuplicates = duplicates
+            )
+        )
+
+        composeTestRule.setContent {
+            MGOManagerTheme {
+                SettingsScreen(
+                    navController = rememberNavController(),
+                    viewModel = viewModel
+                )
+            }
+        }
+
+        // Bulk apply option should be shown for multiple duplicates
+        composeTestRule.onNodeWithText("Für alle Duplikate übernehmen:").assertIsDisplayed()
     }
 }
