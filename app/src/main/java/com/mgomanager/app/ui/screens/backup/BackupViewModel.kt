@@ -1,7 +1,6 @@
 package com.mgomanager.app.ui.screens.backup
 
 import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -386,23 +385,12 @@ class BackupViewModel @Inject constructor(
             try {
                 logRepository.logInfo("BACKUP_VM", "Starte Monopoly GO mit neuem Account: ${account.fullName}")
 
-                // Use RestoreBackupUseCase to set SSAID and copy data
                 val restoreResult = restoreBackupUseCase.execute(account.id)
 
                 when (restoreResult) {
                     is RestoreResult.Success -> {
-                        // Start Monopoly GO via PackageManager (consistent with DetailScreen)
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.scopely.monopolygo")
-                        if (launchIntent != null) {
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(launchIntent)
-                            logRepository.logInfo("BACKUP_VM", "Monopoly GO erfolgreich gestartet")
-                        } else {
-                            showErrorToast("Da lief etwas schief .. Prüfe den Log.")
-                            logRepository.logError("BACKUP_VM", "Monopoly GO konnte nicht gestartet werden: App nicht gefunden")
-                        }
+                        logRepository.logInfo("BACKUP_VM", "Monopoly GO erfolgreich gestartet")
                     }
-
                     is RestoreResult.Failure -> {
                         showErrorToast("Da lief etwas schief .. Prüfe den Log.")
                         logRepository.logError("BACKUP_VM", "Restore fehlgeschlagen: ${restoreResult.error}")

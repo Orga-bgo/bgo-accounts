@@ -49,10 +49,7 @@ class LogRepository @Inject constructor(
         accountName: String? = null,
         stackTrace: String? = null
     ) {
-        // Safety check: ensure we have a persisted session ID
-        // If empty, persist a new session (handles race condition with app startup)
-        val sessionId = settingsDataStore.currentSessionId.first().takeIf { it.isNotBlank() }
-            ?: settingsDataStore.generateNewSession()
+        val sessionId = getCurrentSessionId()
         val log = LogEntity(
             sessionId = sessionId,
             timestamp = System.currentTimeMillis(),
@@ -63,6 +60,14 @@ class LogRepository @Inject constructor(
             stackTrace = stackTrace
         )
         logDao.insertLog(log)
+    }
+
+    /**
+     * Fetch current session id or generate one if missing.
+     */
+    suspend fun getCurrentSessionId(): String {
+        return settingsDataStore.currentSessionId.first().takeIf { it.isNotBlank() }
+            ?: settingsDataStore.generateNewSession()
     }
 
     /**

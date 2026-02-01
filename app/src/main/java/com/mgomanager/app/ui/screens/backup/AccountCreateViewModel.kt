@@ -1,14 +1,12 @@
 package com.mgomanager.app.ui.screens.backup
 
 import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.mgomanager.app.data.model.Account
 import com.mgomanager.app.data.model.BackupResult
 import com.mgomanager.app.data.model.RestoreResult
-import com.mgomanager.app.data.repository.AccountRepository
 import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.BackupRepository
 import com.mgomanager.app.data.repository.LogRepository
@@ -24,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -83,7 +83,6 @@ data class AccountCreateUiState(
 @HiltViewModel
 class AccountCreateViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val accountRepository: AccountRepository,
     private val backupRepository: BackupRepository,
     private val appStateRepository: AppStateRepository,
     private val restoreBackupUseCase: RestoreBackupUseCase,
@@ -94,6 +93,8 @@ class AccountCreateViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(AccountCreateUiState())
     val uiState: StateFlow<AccountCreateUiState> = _uiState.asStateFlow()
+
+    private var accountCreateLogBuilder: StringBuilder? = null
 
     init {
         loadSettings()
@@ -159,9 +160,15 @@ class AccountCreateViewModel @Inject constructor(
             }
 
             // First, ensure root access is ready (critical for Magisk timing)
+            val logBuilder = initializeAccountCreateLog()
+            logBuilder.appendLine("1. Root-Zugriff prüfen ..")
             val rootReady = rootUtil.requestRootAccess()
             if (!rootReady) {
-                logRepository.logError("ACCOUNT_CREATE", "Root-Zugriff konnte nicht angefordert werden")
+                appendStatusLine(logBuilder, "Root-Zugriff vorhanden ..", "Fehler", "Fehlende Rootrechte")
+                finalizeAccountCreateLog(
+                    level = "ERROR",
+                    message = "Account ${_uiState.value.accountName.trim()} Create."
+                )
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -171,12 +178,16 @@ class AccountCreateViewModel @Inject constructor(
                 }
                 return@launch
             }
-            logRepository.logInfo("ACCOUNT_CREATE", "Root-Zugriff bestätigt")
+            appendStatusLine(logBuilder, "Root-Zugriff vorhanden ..", "Erfolg")
 
             // Try to read current SSAID
             try {
+                logBuilder.appendLine()
+                logBuilder.appendLine("2. Aktuelle SSAID auslesen ..")
                 val currentSsaidResult = ssaidUtil.readCurrentSsaid()
                 val currentSsaid = currentSsaidResult.getOrNull()
+                val ssaidStatus = if (currentSsaid.isNullOrBlank()) "Warnung" else "Erfolg"
+                appendStatusLine(logBuilder, "SSAID ausgelesen ..", ssaidStatus)
 
                 _uiState.update {
                     it.copy(
@@ -185,12 +196,16 @@ class AccountCreateViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
+                logBuilder.appendLine()
+                logBuilder.appendLine("2. Aktuelle SSAID auslesen ..")
+                appendStatusLine(logBuilder, "SSAID ausgelesen ..", "Warnung")
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
 
     fun cancelWarning() {
+        resetAccountCreateLog()
         _uiState.update { it.copy(currentStep = AccountCreateStep.NAME_INPUT) }
     }
 
@@ -229,45 +244,84 @@ class AccountCreateViewModel @Inject constructor(
 
     private fun startAccountCreationFlow() {
         viewModelScope.launch {
+            val logBuilder = accountCreateLogBuilder ?: initializeAccountCreateLog()
             try {
                 // Step 4: Wipe app data
                 updateProgress(AccountCreateStep.PROGRESS_WIPE, "App-Daten werden gelöscht...", 0.15f)
                 val wipeResult = ssaidUtil.clearMonopolyGoData()
                 if (wipeResult.isFailure) {
-                    handleError("App-Daten löschen", wipeResult.exceptionOrNull())
+                    appendStatusLine(
+                        logBuilder,
+                        "3. App-Daten löschen ..",
+                        "Fehler",
+                        "App-Daten löschen fehlgeschlagen: ${sanitizeMessage(wipeResult.exceptionOrNull())}"
+                    )
+                    finalizeAccountCreateLog(
+                        level = "ERROR",
+                        message = "Account ${_uiState.value.accountName.trim()} Create."
+                    )
+                    _uiState.update {
+                        it.copy(
+                            currentStep = AccountCreateStep.ERROR,
+                            errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                        )
+                    }
                     return@launch
                 }
+                appendStatusLine(logBuilder, "3. App-Daten löschen ..", "Erfolg")
 
                 // Step 5: Wait for stabilization
                 updateProgress(AccountCreateStep.PROGRESS_WAIT, "Warte auf Stabilisierung...", 0.25f)
                 delay(2000) // Wait 2 seconds
+                appendStatusLine(logBuilder, "4. Warte auf Stabilisierung ..", "Erfolg")
 
                 // Step 6: Patch SSAID
                 updateProgress(AccountCreateStep.PROGRESS_PATCH, "SSAID wird gepatcht...", 0.35f)
                 val patchResult = ssaidUtil.patchSsaid(_uiState.value.selectedSsaid!!)
                 if (patchResult.isFailure) {
-                    handleError("SSAID patchen", patchResult.exceptionOrNull())
+                    appendStatusLine(
+                        logBuilder,
+                        "5. SSAID patchen ..",
+                        "Fehler",
+                        "SSAID patchen fehlgeschlagen: ${sanitizeMessage(patchResult.exceptionOrNull())}"
+                    )
+                    finalizeAccountCreateLog(
+                        level = "ERROR",
+                        message = "Account ${_uiState.value.accountName.trim()} Create."
+                    )
+                    _uiState.update {
+                        it.copy(
+                            currentStep = AccountCreateStep.ERROR,
+                            errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                        )
+                    }
                     return@launch
                 }
+                appendStatusLine(logBuilder, "5. SSAID patchen ..", "Erfolg")
 
                 // Step 7: Start Monopoly GO for initialization
                 updateProgress(AccountCreateStep.PROGRESS_START, "Monopoly GO wird gestartet...", 0.45f)
                 val startResult = ssaidUtil.startMonopolyGo()
                 if (startResult.isFailure) {
-                    logRepository.logWarning("ACCOUNT_CREATE", "Monopoly GO konnte nicht gestartet werden")
+                    appendStatusLine(logBuilder, "6. Monopoly GO starten ..", "Warnung")
                     // Don't abort, just log warning
+                } else {
+                    appendStatusLine(logBuilder, "6. Monopoly GO starten ..", "Erfolg")
                 }
 
                 // Wait for app to initialize
                 updateProgress(AccountCreateStep.PROGRESS_START, "Warte auf Initialisierung...", 0.55f)
                 delay(5000) // Wait 5 seconds for app to create initial files
+                appendStatusLine(logBuilder, "7. Warte auf Initialisierung ..", "Erfolg")
 
                 // Step 8: Stop Monopoly GO
                 updateProgress(AccountCreateStep.PROGRESS_STOP, "Monopoly GO wird gestoppt...", 0.65f)
                 val stopResult = ssaidUtil.stopMonopolyGo()
                 if (stopResult.isFailure) {
-                    logRepository.logWarning("ACCOUNT_CREATE", "Monopoly GO konnte nicht gestoppt werden")
+                    appendStatusLine(logBuilder, "8. Monopoly GO stoppen ..", "Warnung")
                     // Don't abort, just log warning
+                } else {
+                    appendStatusLine(logBuilder, "8. Monopoly GO stoppen ..", "Erfolg")
                 }
 
                 // Additional wait for clean stop
@@ -275,16 +329,32 @@ class AccountCreateViewModel @Inject constructor(
 
                 // Step 9: Backup + extraction
                 updateProgress(AccountCreateStep.PROGRESS_BACKUP, "Backup wird erstellt...", 0.75f)
-                performBackup()
+                val backupResult = performBackup()
+                handleBackupResultForLog(backupResult, logBuilder)
 
             } catch (e: Exception) {
-                handleError("Account erstellen", e)
+                appendStatusLine(
+                    logBuilder,
+                    "Account erstellen ..",
+                    "Fehler",
+                    "Exception: ${sanitizeMessage(e)}"
+                )
+                finalizeAccountCreateLog(
+                    level = "ERROR",
+                    message = "Account ${_uiState.value.accountName.trim()} Create."
+                )
+                _uiState.update {
+                    it.copy(
+                        currentStep = AccountCreateStep.ERROR,
+                        errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
             }
         }
     }
 
-    private suspend fun performBackup() {
-        try {
+    private suspend fun performBackup(): BackupResult {
+        return try {
             val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
             val backupPath = appStateRepository.getBackupDirectory() ?: "/storage/emulated/0/bgo_backups/"
 
@@ -301,58 +371,9 @@ class AccountCreateViewModel @Inject constructor(
 
             updateProgress(AccountCreateStep.PROGRESS_BACKUP, "Daten werden kopiert...", 0.85f)
 
-            val result = backupRepository.createBackup(request)
-
-            when (result) {
-                is BackupResult.Success -> {
-                    // Verify SSAID matches what we set
-                    val expectedSsaid = _uiState.value.selectedSsaid
-                    if (expectedSsaid != null && result.account.ssaid != expectedSsaid) {
-                        logRepository.logWarning(
-                            "ACCOUNT_CREATE",
-                            "SSAID-Warnung: Erwartet $expectedSsaid, gefunden ${result.account.ssaid}"
-                        )
-                    }
-
-                    _uiState.update {
-                        it.copy(
-                            currentStep = AccountCreateStep.SUCCESS,
-                            createdAccount = result.account,
-                            progressPercent = 1f
-                        )
-                    }
-                }
-
-                is BackupResult.PartialSuccess -> {
-                    _uiState.update {
-                        it.copy(
-                            currentStep = AccountCreateStep.SUCCESS,
-                            createdAccount = result.account,
-                            progressPercent = 1f
-                        )
-                    }
-                }
-
-                is BackupResult.DuplicateUserId -> {
-                    _uiState.update {
-                        it.copy(
-                            currentStep = AccountCreateStep.ERROR,
-                            duplicateUserIdInfo = DuplicateInfo(
-                                userId = result.userId,
-                                existingAccountName = result.existingAccountName
-                            ),
-                            errorMessage = "User ID bereits als '${result.existingAccountName}' vorhanden."
-                        )
-                    }
-                }
-
-                is BackupResult.Failure -> {
-                    handleError("Backup erstellen", Exception(result.error))
-                }
-            }
-
+            backupRepository.createBackup(request)
         } catch (e: Exception) {
-            handleError("Backup erstellen", e)
+            BackupResult.Failure("Backup erstellen fehlgeschlagen: ${e.message}", e)
         }
     }
 
@@ -366,12 +387,91 @@ class AccountCreateViewModel @Inject constructor(
         }
     }
 
+    private fun handleBackupResultForLog(result: BackupResult, logBuilder: StringBuilder) {
+        when (result) {
+            is BackupResult.Success -> {
+                appendStatusLine(logBuilder, "9. Backup erstellen ..", "Erfolg")
+                _uiState.update {
+                    it.copy(
+                        currentStep = AccountCreateStep.SUCCESS,
+                        createdAccount = result.account,
+                        progressPercent = 1f
+                    )
+                }
+                finalizeAccountCreateLog(
+                    level = "INFO",
+                    message = "Account ${result.account.fullName} Create."
+                )
+            }
+            is BackupResult.PartialSuccess -> {
+                appendStatusLine(logBuilder, "9. Backup erstellen ..", "Warnung")
+                _uiState.update {
+                    it.copy(
+                        currentStep = AccountCreateStep.SUCCESS,
+                        createdAccount = result.account,
+                        progressPercent = 1f
+                    )
+                }
+                finalizeAccountCreateLog(
+                    level = "WARNING",
+                    message = "Account ${result.account.fullName} Create."
+                )
+            }
+            is BackupResult.DuplicateUserId -> {
+                appendStatusLine(
+                    logBuilder,
+                    "9. Backup erstellen ..",
+                    "Fehler",
+                    "Duplicate UserId: ${hashValue(result.userId)} besteht bereits als ${result.existingAccountName}"
+                )
+                _uiState.update {
+                    it.copy(
+                        currentStep = AccountCreateStep.ERROR,
+                        duplicateUserIdInfo = DuplicateInfo(
+                            userId = result.userId,
+                            existingAccountName = result.existingAccountName
+                        ),
+                        errorMessage = "User ID bereits als '${result.existingAccountName}' vorhanden."
+                    )
+                }
+                finalizeAccountCreateLog(
+                    level = "WARNING",
+                    message = "Account ${_uiState.value.accountName.trim()} Create."
+                )
+            }
+            is BackupResult.Failure -> {
+                appendStatusLine(
+                    logBuilder,
+                    "9. Backup erstellen ..",
+                    "Fehler",
+                    "Backup fehlgeschlagen: ${sanitizeMessage(result.exception ?: Exception(result.error))}"
+                )
+                _uiState.update {
+                    it.copy(
+                        currentStep = AccountCreateStep.ERROR,
+                        errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
+                finalizeAccountCreateLog(
+                    level = "ERROR",
+                    message = "Account ${_uiState.value.accountName.trim()} Create."
+                )
+            }
+        }
+    }
+
     private fun handleError(step: String, exception: Throwable?) {
         viewModelScope.launch {
-            logRepository.logError(
-                "ACCOUNT_CREATE",
-                "Fehler bei Step '$step': ${exception?.message}",
-                exception = exception as? Exception
+            val logBuilder = accountCreateLogBuilder ?: initializeAccountCreateLog()
+            appendStatusLine(
+                logBuilder,
+                "$step ..",
+                "Fehler",
+                "Exception: ${sanitizeMessage(exception)}"
+            )
+            finalizeAccountCreateLog(
+                level = "ERROR",
+                message = "Account ${_uiState.value.accountName.trim()} Create."
             )
         }
 
@@ -381,6 +481,60 @@ class AccountCreateViewModel @Inject constructor(
                 errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
             )
         }
+    }
+
+    private suspend fun initializeAccountCreateLog(): StringBuilder {
+        if (accountCreateLogBuilder != null) {
+            return accountCreateLogBuilder!!
+        }
+        val accountName = _uiState.value.accountName.trim()
+        val sessionId = logRepository.getCurrentSessionId()
+        val correlationId = UUID.randomUUID().toString()
+        return StringBuilder().apply {
+            appendLine("Starte Account-Erstellung von $accountName")
+            appendLine("correlationId: $correlationId")
+            appendLine("sessionId: $sessionId")
+            appendLine()
+        }.also { accountCreateLogBuilder = it }
+    }
+
+    private fun finalizeAccountCreateLog(level: String, message: String) {
+        val logBuilder = accountCreateLogBuilder ?: return
+        viewModelScope.launch {
+            logRepository.addLog(
+                level,
+                "ACCOUNT_CREATE",
+                message,
+                _uiState.value.accountName.trim(),
+                logBuilder.toString()
+            )
+        }
+        resetAccountCreateLog()
+    }
+
+    private fun resetAccountCreateLog() {
+        accountCreateLogBuilder = null
+    }
+
+    private fun appendStatusLine(
+        builder: StringBuilder,
+        line: String,
+        status: String,
+        errorDetail: String? = null
+    ) {
+        builder.appendLine("$line [$status]")
+        if (status == "Fehler" || status == "Userabbruch") {
+            builder.appendLine("Fehlerdetails: ${errorDetail ?: "Unbekannter Fehler"}")
+        }
+    }
+
+    private fun sanitizeMessage(exception: Throwable?): String {
+        return exception?.message?.lineSequence()?.firstOrNull()?.ifBlank { "Unbekannter Fehler" } ?: "Unbekannter Fehler"
+    }
+
+    private fun hashValue(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        return "sha256:" + digest.joinToString("") { "%02x".format(it) }.take(12)
     }
 
     // ============================================================
@@ -411,28 +565,15 @@ class AccountCreateViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true) }
 
             try {
-                logRepository.logInfo("ACCOUNT_CREATE", "Starte Monopoly GO mit neuem Account: ${account.fullName}")
-
                 // Use RestoreBackupUseCase to set SSAID and copy data
                 val restoreResult = restoreBackupUseCase.execute(account.id)
 
                 when (restoreResult) {
                     is RestoreResult.Success -> {
-                        // Start Monopoly GO via PackageManager (consistent with DetailScreen)
-                        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.scopely.monopolygo")
-                        if (launchIntent != null) {
-                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(launchIntent)
-                            logRepository.logInfo("ACCOUNT_CREATE", "Monopoly GO erfolgreich gestartet")
-                        } else {
-                            showErrorToast()
-                            logRepository.logError("ACCOUNT_CREATE", "Monopoly GO konnte nicht gestartet werden: App nicht gefunden")
-                        }
                     }
 
                     is RestoreResult.Failure -> {
                         showErrorToast()
-                        logRepository.logError("ACCOUNT_CREATE", "Restore fehlgeschlagen: ${restoreResult.error}")
                     }
                 }
 
@@ -440,7 +581,6 @@ class AccountCreateViewModel @Inject constructor(
 
             } catch (e: Exception) {
                 showErrorToast()
-                logRepository.logError("ACCOUNT_CREATE", "Unerwarteter Fehler", exception = e)
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
@@ -478,6 +618,7 @@ class AccountCreateViewModel @Inject constructor(
             }
 
             try {
+                val logBuilder = accountCreateLogBuilder ?: initializeAccountCreateLog()
                 val prefix = appStateRepository.getDefaultPrefix() ?: "MGO_"
                 val backupPath = appStateRepository.getBackupDirectory() ?: "/storage/emulated/0/bgo_backups/"
 
@@ -497,6 +638,7 @@ class AccountCreateViewModel @Inject constructor(
 
                 when (result) {
                     is BackupResult.Success -> {
+                        appendStatusLine(logBuilder, "9. Backup erstellen (force) ..", "Erfolg")
                         _uiState.update {
                             it.copy(
                                 currentStep = AccountCreateStep.SUCCESS,
@@ -505,8 +647,13 @@ class AccountCreateViewModel @Inject constructor(
                                 duplicateUserIdInfo = null
                             )
                         }
+                        finalizeAccountCreateLog(
+                            level = "INFO",
+                            message = "Account ${result.account.fullName} Create."
+                        )
                     }
                     is BackupResult.PartialSuccess -> {
+                        appendStatusLine(logBuilder, "9. Backup erstellen (force) ..", "Warnung")
                         _uiState.update {
                             it.copy(
                                 currentStep = AccountCreateStep.SUCCESS,
@@ -515,18 +662,47 @@ class AccountCreateViewModel @Inject constructor(
                                 duplicateUserIdInfo = null
                             )
                         }
+                        finalizeAccountCreateLog(
+                            level = "WARNING",
+                            message = "Account ${result.account.fullName} Create."
+                        )
                     }
                     is BackupResult.DuplicateUserId -> {
                         // Should not happen with forceDuplicate=true
+                        appendStatusLine(
+                            logBuilder,
+                            "9. Backup erstellen (force) ..",
+                            "Fehler",
+                            "Duplicate UserId: ${hashValue(result.userId)} besteht bereits als ${result.existingAccountName}"
+                        )
                         _uiState.update {
                             it.copy(
                                 currentStep = AccountCreateStep.ERROR,
                                 errorMessage = "User ID bereits als '${result.existingAccountName}' vorhanden."
                             )
                         }
+                        finalizeAccountCreateLog(
+                            level = "WARNING",
+                            message = "Account ${_uiState.value.accountName.trim()} Create."
+                        )
                     }
                     is BackupResult.Failure -> {
-                        handleError("Force Backup erstellen", Exception(result.error))
+                        appendStatusLine(
+                            logBuilder,
+                            "9. Backup erstellen (force) ..",
+                            "Fehler",
+                            "Backup fehlgeschlagen: ${sanitizeMessage(result.exception ?: Exception(result.error))}"
+                        )
+                        finalizeAccountCreateLog(
+                            level = "ERROR",
+                            message = "Account ${_uiState.value.accountName.trim()} Create."
+                        )
+                        _uiState.update {
+                            it.copy(
+                                currentStep = AccountCreateStep.ERROR,
+                                errorMessage = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                            )
+                        }
                     }
                 }
             } catch (e: Exception) {

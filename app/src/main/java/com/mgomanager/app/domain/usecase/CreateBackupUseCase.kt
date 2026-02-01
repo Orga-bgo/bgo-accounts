@@ -11,6 +11,8 @@ import com.mgomanager.app.domain.util.RootUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
+import java.util.UUID
 import javax.inject.Inject
 
 data class BackupRequest(
@@ -41,88 +43,240 @@ class CreateBackupUseCase @Inject constructor(
     }
 
     suspend fun execute(request: BackupRequest, forceDuplicate: Boolean = false): BackupResult = withContext(Dispatchers.IO) {
-        try {
-            logRepository.logInfo("BACKUP", "Starte Backup für ${request.accountName}")
+        val correlationId = UUID.randomUUID().toString()
+        val sessionId = logRepository.getCurrentSessionId()
+        val logBuilder = StringBuilder()
+        var logLevel = "INFO"
 
-            // Step 0: Ensure root access is ready (critical for Magisk timing)
+        try {
+            logBuilder.appendLine("Starte Backup von ${request.accountName}")
+            logBuilder.appendLine("correlationId: $correlationId")
+            logBuilder.appendLine("sessionId: $sessionId")
+            logBuilder.appendLine()
+
+            logBuilder.appendLine("1. Root-Zugriff prüfen ..")
             val rootReady = rootUtil.requestRootAccess()
             if (!rootReady) {
-                logRepository.logError("BACKUP", "Root-Zugriff konnte nicht angefordert werden", request.accountName)
-                throw Exception("Root-Zugriff nicht verfügbar")
+                logLevel = "ERROR"
+                appendStatusLine(logBuilder, "Root-Zugriff vorhanden ..", "Fehler", "Fehlende Rootrechte")
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account ${request.accountName} Backup.",
+                    request.accountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Root-Zugriff nicht verfügbar")
             }
-            logRepository.logInfo("BACKUP", "Root-Zugriff bestätigt", request.accountName)
+            appendStatusLine(logBuilder, "Root-Zugriff vorhanden ..", "Erfolg")
 
-            // Step 1: Force stop Monopoly Go
-            rootUtil.forceStopMonopolyGo().getOrThrow()
-            logRepository.logInfo("BACKUP", "Monopoly Go gestoppt", request.accountName)
+            val stopResult = rootUtil.forceStopMonopolyGo()
+            if (stopResult.isFailure) {
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "2. Stoppe Monopoly GO..",
+                    "Fehler",
+                    resolveRootError(stopResult.exceptionOrNull())
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account ${request.accountName} Backup.",
+                    request.accountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Monopoly GO konnte nicht gestoppt werden")
+            }
+            appendStatusLine(logBuilder, "2. Stoppe Monopoly GO..", "Erfolg")
 
-            // Step 2: Read file permissions (with retry for timing issues)
-            val permissions = readFilePermissionsWithRetry(MGO_FILES_PATH, request.accountName)
+            logBuilder.appendLine()
+            logBuilder.appendLine("3. Berechtigungen lesen ..")
+            val permissionsResult = readFilePermissionsWithRetry(MGO_FILES_PATH)
+            val permissions = permissionsResult.getOrElse {
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "Berechtigungen gelesen ..",
+                    "Fehler",
+                    "Berechtigungen lesen fehlgeschlagen: ${sanitizeMessage(it)}"
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account ${request.accountName} Backup.",
+                    request.accountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Berechtigungen konnten nicht gelesen werden", it as? Exception)
+            }
+            appendStatusLine(logBuilder, "Berechtigungen gelesen ..", "Erfolg")
 
-            // Step 2.5: Handle account name duplicates (auto-rename with _1, _2, etc.)
+            logBuilder.appendLine()
+            logBuilder.appendLine("4. Account-Namen prüfen ..")
             val finalAccountName = findUniqueAccountName(request.accountName, request.prefix, request.backupRootPath)
             if (finalAccountName != request.accountName) {
-                logRepository.logInfo("BACKUP", "Account-Name umbenannt: ${request.accountName} -> $finalAccountName")
+                appendStatusLine(logBuilder, "Account-Name prüfen ..", "Warnung")
+                logBuilder.appendLine("Neuer Account-Name: $finalAccountName")
+            } else {
+                appendStatusLine(logBuilder, "Account-Name prüfen ..", "Erfolg")
             }
 
-            // Step 3: Create backup directory (normalize path to avoid double slashes)
             val normalizedRootPath = request.backupRootPath.trimEnd('/')
             val backupPath = "$normalizedRootPath/${request.prefix}$finalAccountName/"
-            val backupDir = File(backupPath)
-
             val createDirResult = rootUtil.executeCommand("mkdir -p \"$backupPath\"")
             if (createDirResult.isFailure) {
-                val errorMsg = createDirResult.exceptionOrNull()?.message ?: "Unknown error"
-                throw Exception("Backup-Verzeichnis konnte nicht erstellt werden: $errorMsg")
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "5. Backup-Verzeichnis erstellen ..",
+                    "Fehler",
+                    "Backup-Verzeichnis konnte nicht erstellt werden: ${sanitizeMessage(createDirResult.exceptionOrNull())}"
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Backup-Verzeichnis konnte nicht erstellt werden: ${createDirResult.exceptionOrNull()?.message}")
             }
-            logRepository.logInfo("BACKUP", "Backup-Verzeichnis erstellt: $backupPath", request.accountName)
+            appendStatusLine(logBuilder, "5. Backup-Verzeichnis erstellen ..", "Erfolg")
 
-            // Step 4: Copy directories (backupPath already ends with /, so no extra slash needed)
-            copyDirectory(MGO_FILES_PATH, "${backupPath}DiskBasedCacheDirectory/", request.accountName)
-            copyDirectory(MGO_PREFS_PATH, "${backupPath}shared_prefs/", request.accountName)
+            logBuilder.appendLine()
+            logBuilder.appendLine("6. Daten kopieren ..")
+            val diskCopyResult = copyDirectory(MGO_FILES_PATH, "${backupPath}DiskBasedCacheDirectory/")
+            if (diskCopyResult.isFailure) {
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "Account Files kopieren (1/2)",
+                    "Fehler",
+                    resolveCopyError(MGO_FILES_PATH, "${backupPath}DiskBasedCacheDirectory/", diskCopyResult.exceptionOrNull())
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Verzeichnis konnte nicht kopiert werden")
+            }
+            appendStatusLine(logBuilder, "Account Files kopieren (1/2)", "Erfolg")
 
-            // Step 5: Copy SSAID file
+            val prefsCopyResult = copyDirectory(MGO_PREFS_PATH, "${backupPath}shared_prefs/")
+            if (prefsCopyResult.isFailure) {
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "Account Files kopieren (2/2)",
+                    "Fehler",
+                    resolveCopyError(MGO_PREFS_PATH, "${backupPath}shared_prefs/", prefsCopyResult.exceptionOrNull())
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("Verzeichnis konnte nicht kopiert werden")
+            }
+            appendStatusLine(logBuilder, "Account Files kopieren (2/2)", "Erfolg")
+
+            logBuilder.appendLine()
+            logBuilder.appendLine("7. SSAID sichern ..")
             val copyResult = rootUtil.executeCommand("cp \"$SSAID_PATH\" \"${backupPath}settings_ssaid.xml\"")
             if (copyResult.isFailure) {
-                logRepository.logWarning("BACKUP", "SSAID-Datei konnte nicht kopiert werden", request.accountName)
+                appendStatusLine(logBuilder, "SSAID kopieren ..", "Warnung")
+            } else {
+                appendStatusLine(logBuilder, "SSAID kopieren ..", "Erfolg")
             }
 
-            // Step 6: Extract IDs
+            logBuilder.appendLine()
+            logBuilder.appendLine("8. IDs extrahieren ..")
             val playerPrefsFile = File("${backupPath}shared_prefs/$PLAYER_PREFS_FILE")
             val extractedIds = idExtractor.extractIdsFromPlayerPrefs(playerPrefsFile).getOrElse {
-                logRepository.logError("BACKUP", "ID-Extraktion fehlgeschlagen", request.accountName, it as? Exception)
-                throw Exception("User ID konnte nicht extrahiert werden (MANDATORY)")
+                logLevel = "ERROR"
+                appendStatusLine(
+                    logBuilder,
+                    "ID-Extraktion ..",
+                    "Fehler",
+                    "ID-Extraktion fehlgeschlagen: ${sanitizeMessage(it)}"
+                )
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("User ID konnte nicht extrahiert werden (MANDATORY)", it as? Exception)
             }
+            appendStatusLine(logBuilder, "ID-Extraktion ..", "Erfolg")
 
-            // Step 6.5: Check for duplicate User ID (unless force flag is set)
+            logBuilder.appendLine()
+            logBuilder.appendLine("9. Duplicate Check ..")
             if (!forceDuplicate) {
                 val existingAccount = accountRepository.getAccountByUserId(extractedIds.userId)
                 if (existingAccount != null) {
-                    logRepository.logWarning("BACKUP", "Duplicate User ID found: ${extractedIds.userId} exists as ${existingAccount.fullName}", finalAccountName)
-                    // Clean up the backup directory we just created
+                    logLevel = "WARNING"
+                    appendStatusLine(
+                        logBuilder,
+                        "Duplicate UserId prüfen ..",
+                        "Fehler",
+                        "Duplicate UserId: ${hashValue(extractedIds.userId)} besteht bereits als ${existingAccount.fullName}"
+                    )
                     rootUtil.executeCommand("rm -rf \"$backupPath\"")
+                    logRepository.addLog(
+                        logLevel,
+                        "BACKUP",
+                        "Account $finalAccountName Backup.",
+                        finalAccountName,
+                        logBuilder.toString()
+                    )
                     return@withContext BackupResult.DuplicateUserId(
                         userId = extractedIds.userId,
                         existingAccountName = existingAccount.fullName
                     )
                 }
             }
+            appendStatusLine(logBuilder, "Duplicate UserId prüfen ..", "Erfolg")
 
-            // Step 7: Extract SSAID (MANDATORY per P3 spec)
+            logBuilder.appendLine()
+            logBuilder.appendLine("10. SSAID extrahieren ..")
             val ssaidFile = File("${backupPath}settings_ssaid.xml")
             if (!ssaidFile.exists()) {
-                logRepository.logError("BACKUP", "SSAID-Datei nicht vorhanden (MANDATORY)", finalAccountName)
+                logLevel = "ERROR"
+                appendStatusLine(logBuilder, "SSAID vorhanden ..", "Fehler", "SSAID nicht vorhanden")
                 rootUtil.executeCommand("rm -rf \"$backupPath\"")
-                throw Exception("SSAID-Datei konnte nicht kopiert werden (MANDATORY)")
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("SSAID-Datei konnte nicht kopiert werden (MANDATORY)")
             }
             val ssaid = idExtractor.extractSsaid(ssaidFile)
             if (ssaid == "nicht vorhanden" || ssaid.isBlank()) {
-                logRepository.logError("BACKUP", "SSAID konnte nicht extrahiert werden (MANDATORY)", finalAccountName)
+                logLevel = "ERROR"
+                appendStatusLine(logBuilder, "SSAID extrahieren ..", "Fehler", "SSAID nicht vorhanden")
                 rootUtil.executeCommand("rm -rf \"$backupPath\"")
-                throw Exception("SSAID konnte nicht extrahiert werden (MANDATORY)")
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
+                return@withContext BackupResult.Failure("SSAID konnte nicht extrahiert werden (MANDATORY)")
             }
+            appendStatusLine(logBuilder, "SSAID extrahieren ..", "Erfolg")
 
-            // Step 8: Create Account object
             val now = System.currentTimeMillis()
             val account = Account(
                 accountName = finalAccountName,
@@ -145,46 +299,55 @@ class CreateBackupUseCase @Inject constructor(
                 filePermissions = permissions.permissions
             )
 
-            // Step 9: Save to database and get the generated ID
             val insertedId = accountRepository.insertAccount(account)
-
-            // Create account with the actual database ID
             val accountWithId = account.copy(id = insertedId)
 
-            logRepository.logInfo(
-                "BACKUP",
-                "Backup erfolgreich abgeschlossen für $finalAccountName (ID: $insertedId)",
-                finalAccountName
-            )
+            logBuilder.appendLine()
+            appendStatusLine(logBuilder, "11. Account in DB speichern ..", "Erfolg")
 
-            // Check if any optional IDs are missing (userId and SSAID are mandatory)
             val missingIds = mutableListOf<String>()
             if (extractedIds.gaid == "nicht vorhanden") missingIds.add("GAID")
             if (extractedIds.deviceToken == "nicht vorhanden") missingIds.add("Device Token")
             if (extractedIds.appSetId == "nicht vorhanden") missingIds.add("App Set ID")
-            // Note: SSAID is mandatory and would have caused abort above if missing
 
             if (missingIds.isNotEmpty()) {
+                logLevel = "WARNING"
+                logBuilder.appendLine("Hinweis: Fehlende optionale IDs: ${missingIds.joinToString(", ")}")
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
                 BackupResult.PartialSuccess(accountWithId, missingIds)
             } else {
+                logRepository.addLog(
+                    logLevel,
+                    "BACKUP",
+                    "Account $finalAccountName Backup.",
+                    finalAccountName,
+                    logBuilder.toString()
+                )
                 BackupResult.Success(accountWithId)
             }
 
         } catch (e: Exception) {
-            logRepository.logError("BACKUP", "Backup fehlgeschlagen: ${e.message}", request.accountName, e)
+            logLevel = "ERROR"
+            appendStatusLine(logBuilder, "Backup fehlgeschlagen", "Fehler", "Exception: ${sanitizeMessage(e)}")
+            logRepository.addLog(
+                logLevel,
+                "BACKUP",
+                "Account ${request.accountName} Backup.",
+                request.accountName,
+                logBuilder.toString()
+            )
             BackupResult.Failure("Backup fehlgeschlagen: ${e.message}", e)
         }
     }
 
-    private suspend fun copyDirectory(source: String, destination: String, accountName: String) {
-        val result = rootUtil.executeCommand("cp -r \"$source\" \"$destination\"")
-        if (result.isSuccess) {
-            logRepository.logInfo("BACKUP", "Verzeichnis kopiert: $source -> $destination", accountName)
-        } else {
-            val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
-            logRepository.logError("BACKUP", "Fehler beim Kopieren: $source - $errorMsg", accountName)
-            throw Exception("Verzeichnis konnte nicht kopiert werden: $source - $errorMsg")
-        }
+    private suspend fun copyDirectory(source: String, destination: String): Result<Unit> {
+        return rootUtil.executeCommand("cp -r \"$source\" \"$destination\"").map { }
     }
 
     /**
@@ -193,27 +356,18 @@ class CreateBackupUseCase @Inject constructor(
      */
     private suspend fun readFilePermissionsWithRetry(
         path: String,
-        accountName: String,
         maxRetries: Int = 3
-    ): FilePermissions {
+    ): Result<FilePermissions> {
         var lastException: Throwable? = null
 
         for (attempt in 1..maxRetries) {
             val result = permissionManager.getFilePermissions(path)
 
             if (result.isSuccess) {
-                if (attempt > 1) {
-                    logRepository.logInfo("BACKUP", "Berechtigungen gelesen (Versuch $attempt)", accountName)
-                }
-                return result.getOrThrow()
+                return Result.success(result.getOrThrow())
             }
 
             lastException = result.exceptionOrNull()
-            logRepository.logWarning(
-                "BACKUP",
-                "Fehler beim Lesen der Berechtigungen (Versuch $attempt/$maxRetries): ${lastException?.message}",
-                accountName
-            )
 
             if (attempt < maxRetries) {
                 // Exponential backoff: 500ms, 1s, 2s
@@ -222,13 +376,7 @@ class CreateBackupUseCase @Inject constructor(
             }
         }
 
-        logRepository.logError(
-            "BACKUP",
-            "Berechtigungen konnten nach $maxRetries Versuchen nicht gelesen werden",
-            accountName,
-            lastException as? Exception
-        )
-        throw lastException ?: Exception("Fehler beim Lesen der Berechtigungen")
+        return Result.failure(lastException ?: Exception("Fehler beim Lesen der Berechtigungen"))
     }
 
     /**
@@ -255,5 +403,40 @@ class CreateBackupUseCase @Inject constructor(
             suffix++
             candidateName = "${baseName}_$suffix"
         }
+    }
+
+    private fun appendStatusLine(
+        builder: StringBuilder,
+        line: String,
+        status: String,
+        errorDetail: String? = null
+    ) {
+        builder.appendLine("$line [$status]")
+        if (status == "Fehler" || status == "Userabbruch") {
+            builder.appendLine("Fehlerdetails: ${errorDetail ?: "Unbekannter Fehler"}")
+        }
+    }
+
+    private fun resolveRootError(exception: Throwable?): String {
+        val message = sanitizeMessage(exception).lowercase()
+        return when {
+            message.contains("timeout") -> "Timeout / Magisk Dialog nicht bestätigt"
+            message.contains("root") -> "Fehlende Rootrechte"
+            else -> "Exception: ${sanitizeMessage(exception)}"
+        }
+    }
+
+    private fun resolveCopyError(source: String, destination: String, exception: Throwable?): String {
+        val message = sanitizeMessage(exception)
+        return "Kopieren fehlgeschlagen: $source -> $destination (Permission/IO Fehler: $message)"
+    }
+
+    private fun hashValue(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        return "sha256:" + digest.joinToString("") { "%02x".format(it) }.take(12)
+    }
+
+    private fun sanitizeMessage(exception: Throwable?): String {
+        return exception?.message?.lineSequence()?.firstOrNull()?.ifBlank { "Unbekannter Fehler" } ?: "Unbekannter Fehler"
     }
 }

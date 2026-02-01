@@ -9,13 +9,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-data class SessionLogs(
-    val sessionId: String,
-    val logs: List<LogEntity>
-)
-
 data class LogUiState(
-    val sessionLogs: List<SessionLogs> = emptyList(),
+    val logs: List<LogEntity> = emptyList(),
     val isLoading: Boolean = false
 )
 
@@ -35,17 +30,9 @@ class LogViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            logRepository.getLastFiveSessionsLogs()
-                .map { logs ->
-                    // Group logs by session
-                    logs.groupBy { it.sessionId }
-                        .map { (sessionId, sessionLogs) ->
-                            SessionLogs(sessionId, sessionLogs.sortedBy { it.timestamp })
-                        }
-                        .sortedByDescending { it.logs.firstOrNull()?.timestamp ?: 0 }
-                }
-                .collect { sessionLogs ->
-                    _uiState.update { it.copy(sessionLogs = sessionLogs, isLoading = false) }
+            logRepository.getAllLogs()
+                .collect { logs ->
+                    _uiState.update { it.copy(logs = logs.sortedByDescending { it.timestamp }, isLoading = false) }
                 }
         }
     }

@@ -18,7 +18,7 @@ class BackupRepository @Inject constructor(
         return createBackupUseCase.execute(request, forceDuplicate)
     }
 
-    suspend fun restoreBackup(accountId: Long): RestoreResult {
-        return restoreBackupUseCase.execute(accountId)
+    suspend fun restoreBackup(accountId: Long, startMonopolyGo: Boolean = true): RestoreResult {
+        return restoreBackupUseCase.execute(accountId, startMonopolyGo)
     }
 }
