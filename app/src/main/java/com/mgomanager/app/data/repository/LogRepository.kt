@@ -39,7 +39,8 @@ class LogRepository @Inject constructor(
     }
 
     /**
-     * Add a new log entry
+     * Add a new log entry.
+     * Ensures session ID is persisted before logging.
      */
     suspend fun addLog(
         level: String,
@@ -48,7 +49,10 @@ class LogRepository @Inject constructor(
         accountName: String? = null,
         stackTrace: String? = null
     ) {
-        val sessionId = settingsDataStore.currentSessionId.first()
+        // Safety check: ensure we have a persisted session ID
+        // If empty, persist a new session (handles race condition with app startup)
+        val sessionId = settingsDataStore.currentSessionId.first().takeIf { it.isNotBlank() }
+            ?: settingsDataStore.generateNewSession()
         val log = LogEntity(
             sessionId = sessionId,
             timestamp = System.currentTimeMillis(),
