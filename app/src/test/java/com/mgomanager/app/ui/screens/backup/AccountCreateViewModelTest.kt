@@ -4,7 +4,6 @@ import android.content.Context
 import com.mgomanager.app.data.model.Account
 import com.mgomanager.app.data.model.BackupResult
 import com.mgomanager.app.data.model.RestoreResult
-import com.mgomanager.app.data.repository.AccountRepository
 import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.BackupRepository
 import com.mgomanager.app.data.repository.LogRepository
@@ -25,7 +24,6 @@ class AccountCreateViewModelTest {
 
     private lateinit var viewModel: AccountCreateViewModel
     private lateinit var context: Context
-    private lateinit var accountRepository: AccountRepository
     private lateinit var backupRepository: BackupRepository
     private lateinit var appStateRepository: AppStateRepository
     private lateinit var restoreBackupUseCase: RestoreBackupUseCase
@@ -54,7 +52,6 @@ class AccountCreateViewModelTest {
         Dispatchers.setMain(testDispatcher)
 
         context = mockk(relaxed = true)
-        accountRepository = mockk(relaxed = true)
         backupRepository = mockk(relaxed = true)
         appStateRepository = mockk(relaxed = true)
         restoreBackupUseCase = mockk(relaxed = true)
@@ -65,9 +62,8 @@ class AccountCreateViewModelTest {
         // Default mock behaviors
         coEvery { appStateRepository.getDefaultPrefix() } returns "MGO_"
         coEvery { appStateRepository.getBackupDirectory() } returns "/storage/emulated/0/bgo_backups/"
-        coEvery { logRepository.logInfo(any(), any(), any()) } just Runs
-        coEvery { logRepository.logError(any(), any(), any(), any()) } just Runs
-        coEvery { logRepository.logWarning(any(), any(), any()) } just Runs
+        coEvery { logRepository.getCurrentSessionId() } returns "session-id"
+        coEvery { logRepository.addLog(any(), any(), any(), any(), any()) } just Runs
         coEvery { ssaidUtil.generateNewSsaid() } returns "0123456789abcdef"
         coEvery { ssaidUtil.readCurrentSsaid() } returns Result.success("fedcba9876543210")
     }
@@ -80,7 +76,6 @@ class AccountCreateViewModelTest {
     private fun createViewModel(): AccountCreateViewModel {
         return AccountCreateViewModel(
             context = context,
-            accountRepository = accountRepository,
             backupRepository = backupRepository,
             appStateRepository = appStateRepository,
             restoreBackupUseCase = restoreBackupUseCase,
