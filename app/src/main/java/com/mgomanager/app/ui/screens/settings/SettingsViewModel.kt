@@ -1,6 +1,7 @@
 package com.mgomanager.app.ui.screens.settings
 
 import android.content.Context
+import android.net.Uri
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,18 +9,25 @@ import com.mgomanager.app.data.local.preferences.SettingsDataStore
 import com.mgomanager.app.data.repository.AppStateRepository
 import com.mgomanager.app.data.repository.LogRepository
 import com.mgomanager.app.domain.usecase.ExportImportUseCase
+import com.mgomanager.app.domain.usecase.ImportBackupsUseCase
+import com.mgomanager.app.domain.usecase.ImportPrepareResult
+import com.mgomanager.app.domain.usecase.ImportAccountData
 import com.mgomanager.app.domain.util.RootUtil
 import com.mgomanager.app.domain.util.SSHSyncService
 import com.mgomanager.app.domain.util.SSHOperationResult
+import com.mgomanager.app.ui.components.DuplicatePair
+import com.mgomanager.app.ui.components.ResolveChoice
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 
 data class SettingsUiState(
     val accountPrefix: String = "MGO_",
     val backupRootPath: String = "/storage/emulated/0/mgo/backups/",
+    val backupRootUri: String? = null, // SAF URI for backup directory
     val isRootAvailable: Boolean = false,
     val appStartCount: Int = 0,
     val prefixSaved: Boolean = false,
@@ -30,6 +38,11 @@ data class SettingsUiState(
     val isExporting: Boolean = false,
     val isImporting: Boolean = false,
     val showImportWarning: Boolean = false,
+    // Interactive import conflict resolution (DEVIATION FROM P6)
+    val importDuplicates: List<DuplicatePair> = emptyList(),
+    val showDuplicateResolveDialog: Boolean = false,
+    val pendingImportAccounts: List<ImportAccountData> = emptyList(),
+    val pendingImportTempDir: File? = null,
     // SSH settings
     val sshEnabled: Boolean = false,
     val sshHost: String = "",
@@ -61,6 +74,7 @@ class SettingsViewModel @Inject constructor(
     private val appStateRepository: AppStateRepository, // Primary source for Prefix and BackupDirectory
     private val rootUtil: RootUtil,
     private val exportImportUseCase: ExportImportUseCase,
+    private val importBackupsUseCase: ImportBackupsUseCase, // Interactive conflict resolution
     private val sshSyncService: SSHSyncService,
     private val logRepository: LogRepository,
     @ApplicationContext private val context: Context
@@ -306,6 +320,257 @@ class SettingsViewModel @Inject constructor(
 
     fun clearImportResult() {
         _uiState.update { it.copy(importResult = null) }
+    }
+
+    // ========== SAF Backup Directory Functions ==========
+
+    /**
+     * Handle SAF directory picker result for backup directory
+     * Stores the URI and takes persistable permission
+     */
+    fun onBackupDirectoryPicked(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                // Take persistable permission
+                val takeFlags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+
+                // Test writability
+                val canWrite = testUriWritability(uri)
+                if (!canWrite) {
+                    logRepository.logError("SETTINGS", "Backup-Verzeichnis nicht beschreibbar: $uri")
+                    showErrorToast()
+                    return@launch
+                }
+
+                // Save URI as string
+                val uriString = uri.toString()
+                appStateRepository.setBackupDirectory(uriString)
+                settingsDataStore.setBackupRootPath(uriString)
+                logRepository.logInfo("SETTINGS", "Backup-Verzeichnis geändert: $uriString")
+                _uiState.update {
+                    it.copy(
+                        backupRootPath = uriString,
+                        backupRootUri = uriString,
+                        pathSaved = true
+                    )
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "Fehler bei Backup-Verzeichnis: ${e.message}", exception = e)
+                showErrorToast()
+            }
+        }
+    }
+
+    private fun testUriWritability(uri: Uri): Boolean {
+        return try {
+            // Try to create a test file
+            val testUri = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, uri)
+            testUri?.canWrite() == true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ========== SAF Export Functions ==========
+
+    /**
+     * Handle SAF document creation result for export ZIP
+     */
+    fun onExportDocumentCreated(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isExporting = true) }
+            logRepository.logInfo("SETTINGS", "Starte Export nach SAF: $uri")
+
+            try {
+                val result = exportImportUseCase.exportDataToUri(context, uri)
+                if (result.isSuccess) {
+                    logRepository.logInfo("SETTINGS", "Export erfolgreich")
+                    _uiState.update {
+                        it.copy(
+                            isExporting = false,
+                            exportResult = "Export erfolgreich!"
+                        )
+                    }
+                } else {
+                    logRepository.logError("SETTINGS", "Export fehlgeschlagen", result.exceptionOrNull()?.message)
+                    showErrorToast()
+                    _uiState.update {
+                        it.copy(
+                            isExporting = false,
+                            exportResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "Export Exception: ${e.message}", exception = e)
+                showErrorToast()
+                _uiState.update {
+                    it.copy(
+                        isExporting = false,
+                        exportResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
+            }
+        }
+    }
+
+    // ========== Interactive Import Functions (DEVIATION FROM P6) ==========
+
+    /**
+     * Handle SAF document selection result for import ZIP
+     * DEVIATION FROM P6: Always shows interactive dialog for UserID conflicts
+     * instead of automatically skipping them.
+     */
+    fun onImportZipSelected(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isImporting = true) }
+            logRepository.logInfo("SETTINGS", "Bereite Import vor: $uri")
+
+            try {
+                when (val result = importBackupsUseCase.prepareImport(uri)) {
+                    is ImportPrepareResult.Ready -> {
+                        // No conflicts, proceed directly
+                        applyImportWithDecisions(result.accountsToImport, result.tempDir, emptyMap())
+                    }
+                    is ImportPrepareResult.NeedsResolution -> {
+                        // Show conflict resolution dialog (DEVIATION FROM P6)
+                        _uiState.update {
+                            it.copy(
+                                isImporting = false,
+                                importDuplicates = result.duplicates,
+                                showDuplicateResolveDialog = true,
+                                pendingImportAccounts = result.accountsToImport,
+                                pendingImportTempDir = result.tempDir
+                            )
+                        }
+                    }
+                    is ImportPrepareResult.Error -> {
+                        logRepository.logError("SETTINGS", "Import-Vorbereitung fehlgeschlagen: ${result.message}")
+                        showErrorToast()
+                        _uiState.update {
+                            it.copy(
+                                isImporting = false,
+                                importResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                logRepository.logError("SETTINGS", "Import Exception: ${e.message}", exception = e)
+                showErrorToast()
+                _uiState.update {
+                    it.copy(
+                        isImporting = false,
+                        importResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Apply conflict resolution decisions and complete import
+     */
+    fun applyConflictDecisions(decisions: Map<String, ResolveChoice>) {
+        val accounts = _uiState.value.pendingImportAccounts
+        val tempDir = _uiState.value.pendingImportTempDir
+
+        if (tempDir == null) {
+            logRepository.logError("SETTINGS", "Kein pending Import gefunden")
+            _uiState.update {
+                it.copy(
+                    showDuplicateResolveDialog = false,
+                    importResult = "Da ist etwas schief gelaufen.. Prüfe den Log"
+                )
+            }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                showDuplicateResolveDialog = false,
+                isImporting = true
+            )
+        }
+
+        viewModelScope.launch {
+            applyImportWithDecisions(accounts, tempDir, decisions)
+        }
+    }
+
+    /**
+     * Cancel import when user dismisses conflict dialog
+     */
+    fun cancelImportConflictResolution() {
+        val tempDir = _uiState.value.pendingImportTempDir
+        if (tempDir != null) {
+            viewModelScope.launch {
+                importBackupsUseCase.cancelImport(tempDir)
+            }
+        }
+
+        _uiState.update {
+            it.copy(
+                showDuplicateResolveDialog = false,
+                importDuplicates = emptyList(),
+                pendingImportAccounts = emptyList(),
+                pendingImportTempDir = null,
+                importResult = "Import abgebrochen"
+            )
+        }
+    }
+
+    private suspend fun applyImportWithDecisions(
+        accounts: List<ImportAccountData>,
+        tempDir: File,
+        decisions: Map<String, ResolveChoice>
+    ) {
+        try {
+            val result = importBackupsUseCase.applyImport(accounts, tempDir, decisions)
+
+            val message = buildString {
+                append("Import abgeschlossen: ")
+                append("${result.importedCount} importiert")
+                if (result.skippedCount > 0) append(", ${result.skippedCount} übersprungen")
+                if (result.archivedCount > 0) append(", ${result.archivedCount} archiviert")
+            }
+
+            if (result.errors.isEmpty()) {
+                logRepository.logInfo("SETTINGS", message)
+                _uiState.update {
+                    it.copy(
+                        isImporting = false,
+                        importResult = message,
+                        pendingImportAccounts = emptyList(),
+                        pendingImportTempDir = null
+                    )
+                }
+            } else {
+                logRepository.logError("SETTINGS", "Import mit Fehlern: ${result.errors.joinToString()}")
+                showErrorToast()
+                _uiState.update {
+                    it.copy(
+                        isImporting = false,
+                        importResult = "Da ist etwas schief gelaufen.. Prüfe den Log",
+                        pendingImportAccounts = emptyList(),
+                        pendingImportTempDir = null
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            logRepository.logError("SETTINGS", "Import Exception: ${e.message}", exception = e)
+            showErrorToast()
+            _uiState.update {
+                it.copy(
+                    isImporting = false,
+                    importResult = "Da ist etwas schief gelaufen.. Prüfe den Log",
+                    pendingImportAccounts = emptyList(),
+                    pendingImportTempDir = null
+                )
+            }
+        }
     }
 
     // ========== SSH Settings Functions (P6 spec) ==========
