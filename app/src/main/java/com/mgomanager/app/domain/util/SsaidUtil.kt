@@ -178,11 +178,12 @@ class SsaidUtil @Inject constructor(
 
     /**
      * Start Monopoly GO for initialization
+     * Uses monkey command with LAUNCHER intent for reliable app startup
      */
     suspend fun startMonopolyGo(): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             logRepository.logInfo("SSAID_UTIL", "Starte Monopoly GO")
-            rootUtil.executeCommand("am start -n $MGO_PACKAGE/.MainActivity").map { }
+            rootUtil.launchMonopolyGo()
         } catch (e: Exception) {
             logRepository.logError("SSAID_UTIL", "Fehler beim Starten von Monopoly GO", exception = e)
             Result.failure(e)
