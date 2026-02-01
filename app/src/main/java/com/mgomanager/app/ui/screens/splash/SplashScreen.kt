@@ -14,7 +14,9 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Splash Screen displayed for 500ms at app start
@@ -28,23 +30,29 @@ fun SplashScreen(
     val alpha = remember { Animatable(0f) }
 
     LaunchedEffect(Unit) {
-        // Animate in
-        scale.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = 300,
-                easing = FastOutSlowInEasing
-            )
-        )
-        alpha.animateTo(
-            targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = 300,
-                easing = FastOutSlowInEasing
-            )
-        )
+        // Animate in (parallel animations for 300ms total)
+        coroutineScope {
+            launch {
+                scale.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 300,
+                        easing = FastOutSlowInEasing
+                    )
+                )
+            }
+            launch {
+                alpha.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 300,
+                        easing = FastOutSlowInEasing
+                    )
+                )
+            }
+        }
 
-        // Wait for 500ms total
+        // Wait for remaining time to reach 500ms total (300ms animation + 200ms delay)
         delay(200)
 
         // Navigate

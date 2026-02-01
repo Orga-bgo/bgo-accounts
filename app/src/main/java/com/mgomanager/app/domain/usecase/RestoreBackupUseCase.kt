@@ -44,13 +44,25 @@ class RestoreBackupUseCase @Inject constructor(
             logRepository.logInfo("RESTORE", "Monopoly Go gestoppt", account.fullName)
 
             // Step 4: Remove old directories and copy backup directories
-            // First delete existing directories to prevent nested folder issues
-            rootUtil.executeCommand("rm -rf \"$MGO_FILES_PATH/DiskBasedCacheDirectory\"")
-            rootUtil.executeCommand("rm -rf \"$MGO_PREFS_PATH\"")
+            // First delete existing directories to prevent nested folder issues (with error checking)
+            val rmDiskCacheResult = rootUtil.executeCommand("rm -rf \"$MGO_FILES_PATH/DiskBasedCacheDirectory\"")
+            if (rmDiskCacheResult.isFailure) {
+                logRepository.logWarning("RESTORE", "Konnte DiskBasedCacheDirectory nicht löschen: ${rmDiskCacheResult.exceptionOrNull()?.message}", account.fullName)
+            }
 
-            // Copy directories to parent (without trailing slashes to copy the folder itself)
-            copyBackupDirectory("${backupPath}DiskBasedCacheDirectory", "$MGO_FILES_PATH/", account.fullName)
-            copyBackupDirectory("${backupPath}shared_prefs", "$MGO_DATA_PATH/", account.fullName)
+            val rmPrefsResult = rootUtil.executeCommand("rm -rf \"$MGO_PREFS_PATH\"")
+            if (rmPrefsResult.isFailure) {
+                logRepository.logWarning("RESTORE", "Konnte shared_prefs nicht löschen: ${rmPrefsResult.exceptionOrNull()?.message}", account.fullName)
+            }
+
+            // Ensure target directories exist before copying
+            rootUtil.executeCommand("mkdir -p \"$MGO_FILES_PATH\"")
+            rootUtil.executeCommand("mkdir -p \"$MGO_DATA_PATH\"")
+
+            // Copy directories - use trailing slash on source to copy contents into destination
+            // This prevents nested folder issues (e.g., shared_prefs/shared_prefs)
+            copyBackupDirectory("${backupPath}DiskBasedCacheDirectory", "$MGO_FILES_PATH/DiskBasedCacheDirectory", account.fullName)
+            copyBackupDirectory("${backupPath}shared_prefs", "$MGO_PREFS_PATH", account.fullName)
 
             // Step 5: Copy SSAID file back
             val ssaidFile = File("${backupPath}settings_ssaid.xml")
@@ -97,7 +109,9 @@ class RestoreBackupUseCase @Inject constructor(
     }
 
     private suspend fun copyBackupDirectory(source: String, destination: String, accountName: String) {
-        val result = rootUtil.executeCommand("cp -r \"$source\" \"$destination\"")
+        // Use cp -rT to copy source TO destination (not INTO destination)
+        // This prevents nested folder issues like shared_prefs/shared_prefs
+        val result = rootUtil.executeCommand("cp -rT \"$source\" \"$destination\"")
         if (result.isSuccess) {
             logRepository.logInfo("RESTORE", "Verzeichnis wiederhergestellt: $source -> $destination", accountName)
         } else {

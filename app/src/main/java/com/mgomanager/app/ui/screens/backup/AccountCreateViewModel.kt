@@ -1,6 +1,7 @@
 package com.mgomanager.app.ui.screens.backup
 
 import android.content.Context
+import android.content.Intent
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -417,19 +418,15 @@ class AccountCreateViewModel @Inject constructor(
 
                 when (restoreResult) {
                     is RestoreResult.Success -> {
-                        // Start Monopoly GO
-                        val launchResult = rootUtil.executeCommand(
-                            "am start -n com.scopely.monopolygo/.MainActivity"
-                        )
-
-                        if (launchResult.isSuccess) {
+                        // Start Monopoly GO via PackageManager (consistent with DetailScreen)
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage("com.scopely.monopolygo")
+                        if (launchIntent != null) {
+                            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(launchIntent)
                             logRepository.logInfo("ACCOUNT_CREATE", "Monopoly GO erfolgreich gestartet")
                         } else {
                             showErrorToast()
-                            logRepository.logError(
-                                "ACCOUNT_CREATE",
-                                "Fehler beim Starten von Monopoly GO: ${launchResult.exceptionOrNull()?.message}"
-                            )
+                            logRepository.logError("ACCOUNT_CREATE", "Monopoly GO konnte nicht gestartet werden: App nicht gefunden")
                         }
                     }
 
